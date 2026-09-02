@@ -38,6 +38,7 @@ src/ww_weights.svh      generated weights: hidden templates, biases, output laye
 src/config.json         LibreLane config from the ttihp template (PL_TARGET_DENSITY_PCT 85)
 info.yaml               TinyTapeout project metadata and pinout
 docs/info.md            datasheet: how it works, how to test, external hardware
+docs/DESIGN.md          full design reference: signal chain, architecture, training, flow, verification
 test/                   cocotb: reset, front end bit-exact, detector vs. model; RTL and GL
 train/wwhw.py           bit-exact software twin of the RTL
 train/wwdata.py         Speech Commands loader, official speaker-disjoint split
