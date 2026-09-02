@@ -1,0 +1,67 @@
+train (60000, 784)  test (10000, 784)  pixel range [0,15]
+mode=ternary hidden=16 shift1=4
+ep   1/60  loss 0.9746  int-train 88.20%  int-test 88.43%  *
+ep   2/60  loss 0.5317  int-train 86.03%  int-test 86.09%
+ep   3/60  loss 0.4883  int-train 89.13%  int-test 89.79%  *
+ep   4/60  loss 0.4793  int-train 88.40%  int-test 88.48%
+ep   5/60  loss 0.4750  int-train 89.23%  int-test 89.55%
+ep   6/60  loss 0.4700  int-train 89.98%  int-test 90.03%  *
+ep   7/60  loss 0.4576  int-train 89.18%  int-test 89.24%
+ep   8/60  loss 0.4679  int-train 90.01%  int-test 89.99%
+ep   9/60  loss 0.4439  int-train 90.56%  int-test 90.60%  *
+ep  10/60  loss 0.4377  int-train 91.33%  int-test 91.42%  *
+ep  11/60  loss 0.4355  int-train 90.57%  int-test 90.12%
+ep  12/60  loss 0.4414  int-train 90.06%  int-test 90.53%
+ep  13/60  loss 0.4422  int-train 89.34%  int-test 89.76%
+ep  14/60  loss 0.4289  int-train 88.65%  int-test 88.91%
+ep  15/60  loss 0.4308  int-train 91.48%  int-test 91.30%
+ep  16/60  loss 0.4332  int-train 90.28%  int-test 90.28%
+ep  17/60  loss 0.4397  int-train 90.20%  int-test 89.78%
+ep  18/60  loss 0.4346  int-train 90.41%  int-test 90.14%
+ep  19/60  loss 0.4313  int-train 92.07%  int-test 91.55%  *
+ep  20/60  loss 0.4243  int-train 91.26%  int-test 90.50%
+ep  21/60  loss 0.4260  int-train 92.05%  int-test 91.99%  *
+ep  22/60  loss 0.4192  int-train 90.12%  int-test 90.33%
+ep  23/60  loss 0.4253  int-train 91.60%  int-test 91.29%
+ep  24/60  loss 0.4330  int-train 91.61%  int-test 90.96%
+ep  25/60  loss 0.4231  int-train 90.73%  int-test 90.45%
+ep  26/60  loss 0.4293  int-train 87.83%  int-test 88.37%
+ep  27/60  loss 0.4212  int-train 92.22%  int-test 91.78%
+ep  28/60  loss 0.4107  int-train 90.91%  int-test 90.40%
+ep  29/60  loss 0.4257  int-train 89.46%  int-test 89.20%
+ep  30/60  loss 0.4175  int-train 91.76%  int-test 91.47%
+ep  31/60  loss 0.4201  int-train 90.48%  int-test 89.88%
+ep  32/60  loss 0.4115  int-train 90.68%  int-test 90.97%
+ep  33/60  loss 0.4240  int-train 91.79%  int-test 91.37%
+ep  34/60  loss 0.4069  int-train 91.94%  int-test 92.17%  *
+ep  35/60  loss 0.4087  int-train 88.21%  int-test 88.26%
+ep  36/60  loss 0.4191  int-train 89.37%  int-test 88.40%
+ep  37/60  loss 0.4160  int-train 91.09%  int-test 91.14%
+ep  38/60  loss 0.4091  int-train 89.57%  int-test 89.61%
+ep  39/60  loss 0.4004  int-train 92.10%  int-test 91.80%
+ep  40/60  loss 0.4018  int-train 90.97%  int-test 90.63%
+ep  41/60  loss 0.4004  int-train 91.90%  int-test 91.63%
+ep  42/60  loss 0.3954  int-train 91.58%  int-test 91.73%
+ep  43/60  loss 0.3986  int-train 91.05%  int-test 90.93%
+ep  44/60  loss 0.4033  int-train 89.40%  int-test 89.67%
+ep  45/60  loss 0.3906  int-train 90.92%  int-test 91.04%
+ep  46/60  loss 0.3853  int-train 92.26%  int-test 92.31%  *
+ep  47/60  loss 0.3842  int-train 92.57%  int-test 92.76%  *
+ep  48/60  loss 0.3908  int-train 91.17%  int-test 91.07%
+ep  49/60  loss 0.3922  int-train 91.24%  int-test 90.76%
+ep  50/60  loss 0.3889  int-train 91.90%  int-test 91.40%
+ep  51/60  loss 0.3884  int-train 90.35%  int-test 90.23%
+ep  52/60  loss 0.3792  int-train 92.47%  int-test 92.46%
+ep  53/60  loss 0.3764  int-train 90.93%  int-test 90.74%
+ep  54/60  loss 0.3779  int-train 92.52%  int-test 92.38%
+ep  55/60  loss 0.3787  int-train 92.37%  int-test 91.85%
+ep  56/60  loss 0.3709  int-train 90.50%  int-test 90.68%
+ep  57/60  loss 0.3696  int-train 92.46%  int-test 92.40%
+ep  58/60  loss 0.3690  int-train 92.75%  int-test 92.55%
+ep  59/60  loss 0.3473  int-train 91.65%  int-test 92.10%
+ep  60/60  loss 0.3383  int-train 92.87%  int-test 92.53%
+
+best integer test accuracy: 92.76%  (17s)
+wrote artifacts/weights_ternary_h16.{npz,json}
+reference self-check ok  hidden=[2, 0, 0, 2, 9, 0, 7, 0, 6, 15, 2, 1, 9, 11, 0, 4]  pred=7
+w1 histogram: {-1: 4822, 0: 4001, 1: 3721}

@@ -1,0 +1,1371 @@
+<title>MNIST on a 1×1 Tile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#F5F8F8; --surface:#FFFFFF; --surface-2:#EDF2F2;
+  --ink:#101617; --ink-2:#586567; --ink-3:#7C8A8C;
+  --rule:#D9E1E1; --rule-2:#C3CFCF;
+  --accent:#00807D; --accent-ink:#00615F; --accent-wash:#DCEEEC;
+  --ok:#2E7A4F; --watch:#8E620E; --over:#AB392F;
+  --shadow:0 1px 2px rgba(16,22,23,.05), 0 8px 24px -16px rgba(16,22,23,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0C1011; --surface:#141A1B; --surface-2:#1B2223;
+    --ink:#E5ECEC; --ink-2:#93A1A2; --ink-3:#748283;
+    --rule:#232C2D; --rule-2:#313C3D;
+    --accent:#39CFC3; --accent-ink:#6FE0D6; --accent-wash:#0E3230;
+    --ok:#5CBE86; --watch:#D6A33C; --over:#E0705F;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0C1011; --surface:#141A1B; --surface-2:#1B2223;
+  --ink:#E5ECEC; --ink-2:#93A1A2; --ink-3:#748283;
+  --rule:#232C2D; --rule-2:#313C3D;
+  --accent:#39CFC3; --accent-ink:#6FE0D6; --accent-wash:#0E3230;
+  --ok:#5CBE86; --watch:#D6A33C; --over:#E0705F;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size:16px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{font-family:"Archivo", ui-sans-serif, system-ui, sans-serif; text-wrap:balance; margin:0}
+code,kbd,.mono,td.num,th.num{font-family:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace}
+
+.wrap{max-width:1200px; margin:0 auto; padding:0 24px}
+
+/* ---------- masthead ---------- */
+.masthead{border-bottom:1px solid var(--rule); background:var(--surface)}
+.masthead .wrap{padding-top:44px; padding-bottom:0}
+.eyebrow{
+  font-family:"IBM Plex Mono", monospace; font-size:11.5px; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink);
+  display:flex; flex-wrap:wrap; gap:8px 14px; margin-bottom:18px;
+}
+.eyebrow span:not(:last-child)::after{content:" ·"; color:var(--ink-3)}
+h1{font-size:clamp(38px,6.2vw,68px); font-weight:700; letter-spacing:-.026em; line-height:1.02}
+.dek{
+  font-size:clamp(17px,1.9vw,20px); color:var(--ink-2); max-width:62ch;
+  margin:18px 0 0; line-height:1.5;
+}
+.partline{
+  display:flex; flex-wrap:wrap; gap:10px 20px; align-items:baseline;
+  margin:26px 0 0; font-family:"IBM Plex Mono", monospace; font-size:13px; color:var(--ink-2);
+}
+.partline b{color:var(--ink); font-weight:600}
+
+/* key characteristics strip */
+.keys{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(148px,1fr));
+  border-top:1px solid var(--rule); margin-top:34px;
+}
+.key{padding:18px 20px 20px; border-right:1px solid var(--rule)}
+.key:last-child{border-right:0}
+.key dt{
+  font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 6px;
+}
+.key dd{
+  margin:0; font-family:"Archivo", sans-serif; font-weight:600; font-size:26px;
+  letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1.1;
+}
+.key dd small{font-size:13px; font-weight:500; color:var(--ink-2); letter-spacing:0}
+
+/* ---------- shell ---------- */
+.shell{display:grid; grid-template-columns:1fr; gap:0; padding:52px 0 96px}
+@media (min-width:1040px){
+  .shell{grid-template-columns:186px minmax(0,1fr); gap:56px}
+}
+nav.rail{display:none}
+@media (min-width:1040px){
+  nav.rail{display:block; position:sticky; top:28px; align-self:start; max-height:calc(100vh - 56px); overflow:auto}
+}
+nav.rail ol{list-style:none; margin:0; padding:0; border-left:1px solid var(--rule)}
+nav.rail a{
+  display:grid; grid-template-columns:24px 1fr; gap:8px;
+  padding:6px 0 6px 14px; margin-left:-1px; border-left:2px solid transparent;
+  color:var(--ink-2); text-decoration:none; font-size:13.5px; line-height:1.35;
+}
+nav.rail a span{font-family:"IBM Plex Mono", monospace; font-size:11px; color:var(--ink-3); padding-top:2px}
+nav.rail a:hover{color:var(--ink)}
+nav.rail a.on{color:var(--accent-ink); border-left-color:var(--accent); font-weight:500}
+nav.rail a.on span{color:var(--accent)}
+nav.rail a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+
+main{min-width:0}
+section{scroll-margin-top:24px}
+section + section{margin-top:64px}
+.secno{
+  font-family:"IBM Plex Mono", monospace; font-size:11.5px; letter-spacing:.14em;
+  color:var(--accent); text-transform:uppercase; display:block; margin-bottom:8px;
+}
+h2{font-size:clamp(25px,3.2vw,33px); font-weight:600; letter-spacing:-.022em; line-height:1.15}
+h3{font-size:19px; font-weight:600; letter-spacing:-.012em; margin:38px 0 0}
+h2 + p, h3 + p{margin-top:12px}
+p{margin:16px 0 0; max-width:68ch}
+p.lead{font-size:17.5px; color:var(--ink-2); max-width:64ch}
+ul,ol.body{max-width:68ch; margin:16px 0 0; padding-left:22px}
+li{margin:7px 0}
+strong{font-weight:600}
+a{color:var(--accent-ink)}
+hr.soft{border:0; border-top:1px solid var(--rule); margin:38px 0 0}
+
+/* ---------- figures & tables ---------- */
+figure{margin:32px 0 0; padding:0}
+figure svg{display:block; width:100%; max-width:100%; height:auto}
+.plate{
+  background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+  padding:22px 20px; box-shadow:var(--shadow);
+}
+figcaption{
+  margin-top:12px; font-size:13.5px; color:var(--ink-2); line-height:1.5; max-width:74ch;
+}
+figcaption b{color:var(--ink); font-weight:600}
+
+.scroller{overflow-x:auto; -webkit-overflow-scrolling:touch}
+table{border-collapse:collapse; width:100%; font-size:14px; min-width:520px}
+caption{
+  caption-side:top; text-align:left; font-family:"IBM Plex Mono", monospace;
+  font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink-3); padding-bottom:10px;
+}
+th,td{
+  text-align:left; padding:9px 14px 9px 0; border-bottom:1px solid var(--rule);
+  vertical-align:top;
+}
+thead th{
+  font-family:"IBM Plex Mono", monospace; font-size:11px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-3); font-weight:500;
+  border-bottom:1px solid var(--rule-2); padding-bottom:8px; white-space:nowrap;
+}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; padding-right:0}
+tbody tr:last-child td{border-bottom:0}
+tr.hi td{background:var(--accent-wash)}
+tr.hi td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+td code{font-size:13px}
+code{
+  font-size:.9em; background:var(--surface-2); padding:1.5px 5px; border-radius:2px;
+  color:var(--ink);
+}
+pre{
+  margin:22px 0 0; padding:18px 20px; background:var(--surface); color:var(--ink);
+  border:1px solid var(--rule); border-radius:3px; overflow-x:auto;
+  font-family:"IBM Plex Mono", monospace; font-size:13px; line-height:1.65;
+}
+pre code{background:none; padding:0; font-size:inherit}
+.cmt{color:var(--ink-3)}
+.kw{color:var(--accent-ink)}
+
+/* callout */
+.note{
+  margin:30px 0 0; padding:18px 22px; border-left:3px solid var(--accent);
+  background:var(--surface); border-radius:0 3px 3px 0;
+}
+.note h4{
+  font-size:12px; font-family:"IBM Plex Mono", monospace; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--accent-ink); margin-bottom:8px;
+}
+.note p{margin-top:0}
+.note p + p{margin-top:12px}
+
+/* status pills */
+.pill{
+  display:inline-block; font-family:"IBM Plex Mono", monospace; font-size:10.5px;
+  letter-spacing:.08em; text-transform:uppercase; padding:2px 7px; border-radius:2px;
+  border:1px solid currentColor; white-space:nowrap;
+}
+.pill.ok{color:var(--ok)} .pill.watch{color:var(--watch)} .pill.over{color:var(--over)}
+
+/* ---------- SVG diagram classes ---------- */
+.d-box{fill:var(--surface); stroke:currentColor; stroke-width:1.1}
+.d-box-a{fill:var(--accent-wash); stroke:var(--accent); stroke-width:1.3}
+.d-fill{fill:var(--surface-2); stroke:currentColor; stroke-width:1}
+.d-line{stroke:currentColor; stroke-width:1.1; fill:none}
+.d-line-a{stroke:var(--accent); stroke-width:1.5; fill:none}
+.d-dash{stroke:currentColor; stroke-width:1; fill:none; stroke-dasharray:4 3; opacity:.55}
+.d-t{fill:currentColor; font-family:"IBM Plex Sans", sans-serif; font-size:12.5px}
+.d-tb{fill:currentColor; font-family:"Archivo", sans-serif; font-size:13px; font-weight:600}
+.d-m{fill:currentColor; font-family:"IBM Plex Mono", monospace; font-size:11px}
+.d-lab{fill:var(--ink-2); font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:.04em}
+.d-a{fill:var(--accent); font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:.04em}
+.d-head{fill:var(--ink-3); font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:.12em}
+
+/* ---------- config explorer ---------- */
+.explorer{
+  margin:32px 0 0; border:1px solid var(--rule); border-radius:3px;
+  background:var(--surface); box-shadow:var(--shadow); overflow:hidden;
+}
+.tabs{display:flex; flex-wrap:wrap; border-bottom:1px solid var(--rule); background:var(--surface-2)}
+.tabs button{
+  appearance:none; background:none; border:0; border-right:1px solid var(--rule);
+  border-bottom:2px solid transparent; margin-bottom:-1px;
+  padding:12px 16px; cursor:pointer; color:var(--ink-2);
+  font-family:"IBM Plex Mono", monospace; font-size:12px; letter-spacing:.02em;
+  white-space:nowrap;
+}
+.tabs button:hover{color:var(--ink); background:var(--surface)}
+.tabs button[aria-pressed="true"]{
+  color:var(--accent-ink); background:var(--surface); border-bottom-color:var(--accent); font-weight:500;
+}
+.tabs button:focus-visible{outline:2px solid var(--accent); outline-offset:-3px}
+.exp-body{display:grid; grid-template-columns:1fr; gap:0}
+@media (min-width:760px){ .exp-body{grid-template-columns:minmax(0,1fr) 300px} }
+.exp-vis{padding:24px; display:flex; flex-direction:column; gap:12px; min-width:0}
+.exp-vis svg{display:block; width:100%; height:auto; max-width:520px; margin:0 auto; color:var(--ink)}
+.cellrect{fill:var(--accent)}
+.rowline{stroke:currentColor; stroke-width:.12; opacity:.16}
+.tileframe{fill:var(--surface-2); stroke:currentColor; stroke-width:.6}
+.exp-scale{
+  display:flex; justify-content:space-between; font-family:"IBM Plex Mono", monospace;
+  font-size:10.5px; color:var(--ink-3); max-width:520px; margin:0 auto; width:100%;
+}
+.exp-stats{border-left:1px solid var(--rule); padding:6px 0}
+@media (max-width:759px){ .exp-stats{border-left:0; border-top:1px solid var(--rule)} }
+.stat{
+  display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  padding:10px 22px; border-bottom:1px solid var(--rule);
+}
+.stat:last-child{border-bottom:0}
+.stat dt{
+  font-family:"IBM Plex Mono", monospace; font-size:10.5px; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+.stat dd{
+  margin:0; font-family:"Archivo", sans-serif; font-weight:600; font-size:17px;
+  font-variant-numeric:tabular-nums; letter-spacing:-.01em;
+}
+.stat dd small{font-weight:500; font-size:12px; color:var(--ink-2)}
+.exp-foot{
+  padding:12px 22px; border-top:1px solid var(--rule); background:var(--surface-2);
+  font-size:13px; color:var(--ink-2); display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+}
+
+/* comparison cards */
+.grid2{display:grid; grid-template-columns:1fr; gap:20px; margin-top:28px}
+@media (min-width:720px){ .grid2{grid-template-columns:1fr 1fr} }
+.card{
+  border:1px solid var(--rule); border-radius:3px; padding:20px 22px 22px;
+  background:var(--surface);
+}
+.card h4{font-size:15px; font-weight:600; margin-bottom:4px}
+.card .metric{
+  font-family:"Archivo", sans-serif; font-weight:700; font-size:32px;
+  letter-spacing:-.025em; font-variant-numeric:tabular-nums; line-height:1.1; margin:10px 0 2px;
+}
+.card p{font-size:14px; margin-top:10px; color:var(--ink-2)}
+.card .sub{font-family:"IBM Plex Mono", monospace; font-size:11px; color:var(--ink-3); letter-spacing:.06em; text-transform:uppercase}
+
+footer{border-top:1px solid var(--rule); background:var(--surface)}
+footer .wrap{padding:28px 24px 46px; font-size:13px; color:var(--ink-3)}
+footer code{background:none; color:var(--ink-2)}
+
+@media (prefers-reduced-motion: reduce){ *{transition:none !important; animation:none !important} }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="eyebrow">
+      <span>Design document</span><span>TinyTapeout IHP</span><span>sg13g2 130 nm</span><span>1×1 tile</span>
+    </div>
+    <h1>MNIST on a 1×1 Tile</h1>
+    <p class="dek">
+      A 784→16→10 digit classifier in 0.031 mm² of silicon. It holds no weights and
+      no image — the host streams one pixel-and-weight byte per clock, and the chip
+      keeps a single 20-bit accumulator.
+    </p>
+    <div class="partline">
+      <span>module <b>tt_um_mnist_nn</b></span>
+      <span>50 MHz</span>
+      <span>8 in / 8 out / 8 bidir</span>
+      <span>SystemVerilog</span>
+    </div>
+
+    <dl class="keys">
+      <div class="key"><dt>Tile utilisation</dt><dd>50.1<small> %</small></dd></div>
+      <div class="key"><dt>Test accuracy</dt><dd>95.47<small> %</small></dd></div>
+      <div class="key"><dt>Standard cells</dt><dd>998</dd></div>
+      <div class="key"><dt>Flip-flops</dt><dd>138</dd></div>
+      <div class="key"><dt>Latency</dt><dd>257<small> µs</small></dd></div>
+      <div class="key"><dt>Weights on chip</dt><dd>0<small> bytes</small></dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap shell">
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#constraint"><span>01</span>The constraint</a></li>
+      <li><a href="#decisions"><span>02</span>Two decisions</a></li>
+      <li><a href="#datapath"><span>03</span>Datapath</a></li>
+      <li><a href="#arithmetic"><span>04</span>Arithmetic</a></li>
+      <li><a href="#interface"><span>05</span>Host interface</a></li>
+      <li><a href="#training"><span>06</span>Training</a></li>
+      <li><a href="#results"><span>07</span>Results</a></li>
+      <li><a href="#surprises"><span>08</span>What measurement changed</a></li>
+      <li><a href="#scaling"><span>09</span>Scaling limits</a></li>
+      <li><a href="#verification"><span>10</span>Verification</a></li>
+      <li><a href="#tapeout"><span>11</span>Tape-out</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <!-- 01 -->
+  <section id="constraint">
+    <span class="secno">01 — The constraint</span>
+    <h2>A 1×1 tile is 31 318 µm², and weights don't fit in it</h2>
+    <p class="lead">
+      The IHP TinyTapeout 1×1 tile measures 202.08 × 154.98 µm. At the sg13g2 row
+      height of 3.78 µm that is exactly 41 standard-cell rows. OpenLane places at
+      60 % density by default, so the working budget is roughly 18 800 µm² of cells.
+    </p>
+    <p>
+      A 784→16 layer has 12 544 weights. At 4 bits each that is 6.2 kB. A flip-flop
+      in this library (<code>sg13g2_dfrbpq_1</code>) costs 48.99 µm², so storing those
+      weights on chip would need about 2 460 000 µm² — <strong>78 whole tiles</strong>
+      for the weights alone, before a single gate of arithmetic.
+    </p>
+    <p>
+      So the design question is not "how do we compress the network" but "what must
+      actually live on the die". The answer turns out to be: the partial sums, and
+      nothing else.
+    </p>
+  </section>
+
+  <!-- 02 -->
+  <section id="decisions">
+    <span class="secno">02 — Two decisions</span>
+    <h2>Stream the weights, and pick the loop order that needs one accumulator</h2>
+    <p>
+      <strong>The host owns the weights.</strong> Every clock it presents one byte:
+      the high nibble is a 4-bit pixel, the low nibble is a 4-bit signed weight.
+      Eight bits in, one multiply-accumulate out — the pin bandwidth and the compute
+      rate are exactly matched, with no buffering on either side.
+    </p>
+    <p>
+      <strong>The loop order is the second decision, and it is the one that saves the
+      area.</strong> The obvious schedule streams pixels on the outside: read pixel 0,
+      apply it to all 16 hidden neurons, move on. That needs 16 live accumulators.
+      Inverting the loops — every pixel for hidden unit 0, then every pixel for unit
+      1 — leaves exactly one sum alive at a time. The host sends the same 12 544 bytes
+      either way.
+    </p>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 860 250" role="img" aria-label="Comparison of two loop orders. Pixel-outer keeps sixteen 20-bit accumulators live at once with a write demultiplexer; neuron-outer keeps one accumulator live and writes a 4-bit result per neuron, for the same host traffic.">
+          <text class="d-head" x="0" y="14">PIXEL-OUTER — NOT USED</text>
+          <text class="d-head" x="460" y="14">NEURON-OUTER — SHIPPED</text>
+          <line class="d-dash" x1="428" y1="0" x2="428" y2="250"/>
+
+          <!-- left: pixel outer -->
+          <rect class="d-box" x="0" y="36" width="86" height="34" rx="2"/>
+          <text class="d-t" x="43" y="57" text-anchor="middle">pixel p</text>
+          <path class="d-line" d="M86 53 H128" marker-end="url(#ah)"/>
+          <rect class="d-box" x="128" y="36" width="62" height="34" rx="2"/>
+          <text class="d-t" x="159" y="57" text-anchor="middle">MAC</text>
+
+          <path class="d-line" d="M190 53 H238" marker-end="url(#ah)"/>
+          <text class="d-lab" x="196" y="45">1:16 demux</text>
+          <g>
+            <rect class="d-fill" x="238" y="30" width="150" height="17" rx="1.5"/>
+            <text class="d-m" x="246" y="42">acc[0]   20 b</text>
+            <rect class="d-fill" x="238" y="51" width="150" height="17" rx="1.5"/>
+            <text class="d-m" x="246" y="63">acc[1]   20 b</text>
+            <rect class="d-fill" x="238" y="72" width="150" height="17" rx="1.5"/>
+            <text class="d-m" x="246" y="84">…</text>
+            <rect class="d-fill" x="238" y="93" width="150" height="17" rx="1.5"/>
+            <text class="d-m" x="246" y="105">acc[15]  20 b</text>
+          </g>
+          <path class="d-line" d="M313 110 V132 H159 V70" marker-end="url(#ah)"/>
+          <text class="d-lab" x="168" y="128">read-back mux, 16:1</text>
+
+          <rect x="0" y="162" width="388" height="1" fill="currentColor" opacity=".18"/>
+          <text class="d-tb" x="0" y="186">320 flops of accumulator</text>
+          <text class="d-t" x="0" y="207">plus a 1:16 write demux and a 16:1</text>
+          <text class="d-t" x="0" y="224">read mux on the 20-bit datapath.</text>
+
+          <!-- right: neuron outer -->
+          <rect class="d-box" x="460" y="36" width="94" height="34" rx="2"/>
+          <text class="d-t" x="507" y="57" text-anchor="middle">784 pixels</text>
+          <path class="d-line" d="M554 53 H596" marker-end="url(#ah)"/>
+          <rect class="d-box" x="596" y="36" width="62" height="34" rx="2"/>
+          <text class="d-t" x="627" y="57" text-anchor="middle">MAC</text>
+          <path class="d-line" d="M658 53 H706" marker-end="url(#ah)"/>
+          <rect class="d-box-a" x="706" y="30" width="150" height="46" rx="2"/>
+          <text class="d-m" x="781" y="49" text-anchor="middle" style="fill:var(--accent-ink)">acc</text>
+          <text class="d-m" x="781" y="66" text-anchor="middle" style="fill:var(--accent-ink)">20 b — the only one</text>
+          <path class="d-line-a" d="M781 76 V104" marker-end="url(#aha)"/>
+          <text class="d-a" x="790" y="94">once per neuron</text>
+          <rect class="d-fill" x="706" y="104" width="150" height="24" rx="1.5"/>
+          <text class="d-m" x="781" y="120" text-anchor="middle">hidden[n] ← 4 b</text>
+          <path class="d-line" d="M706 116 H627 V70" marker-end="url(#ah)"/>
+          <text class="d-lab" x="600" y="140">reused as the layer-2 activation</text>
+
+          <rect x="460" y="162" width="400" height="1" fill="currentColor" opacity=".18"/>
+          <text class="d-tb" x="460" y="186">20 flops of accumulator + 64 of hidden</text>
+          <text class="d-t" x="460" y="207">No demux, no read mux on the wide path.</text>
+          <text class="d-t" x="460" y="224">Identical host traffic: 12 544 bytes.</text>
+
+          <defs>
+            <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="currentColor"/>
+            </marker>
+            <marker id="aha" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="var(--accent)"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The loop order is the architecture.</b> Both schedules perform the same
+        12 544 multiply-accumulates and consume the same bytes from the host. Only the
+        right-hand one fits: it removes 15 accumulators and the wide muxing around
+        them, about 180 flip-flops.
+      </figcaption>
+    </figure>
+
+    <p>
+      Everything else follows from those two choices. Only the winning class and its
+      score are kept, so there is no ten-element score vector. Biases are shifted in
+      through the accumulator itself, so there is no separate bias register or load
+      path. ReLU costs nothing because the clamp that produces a 4-bit activation
+      already discards negatives.
+    </p>
+  </section>
+
+  <!-- 03 -->
+  <section id="datapath">
+    <span class="secno">03 — Datapath</span>
+    <h2>One multiplier, one adder, one accumulator, used four ways</h2>
+    <p>
+      The accumulator serves the first layer, the second layer, and the bias load.
+      The multiplier's activation input is a two-way mux: the incoming pixel nibble
+      during layer 1, a hidden register during layer 2. That single mux is the whole
+      difference between the two layers.
+    </p>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 860 330" role="img" aria-label="Datapath: the host byte splits into a pixel nibble and a weight nibble; a two-input mux selects either the pixel or a hidden register as the multiplier's activation; the product enters a 20-bit accumulator; on NEURON_DONE the accumulator is shifted and clamped into the hidden register file; on CLASS_DONE it is compared against the best score, whose class index drives the output pins.">
+          <!-- host -->
+          <rect class="d-box" x="0" y="52" width="76" height="40" rx="2"/>
+          <text class="d-t" x="38" y="77" text-anchor="middle">host</text>
+          <path class="d-line" d="M76 72 H140" marker-end="url(#bh)"/>
+          <text class="d-lab" x="80" y="64">1 B / clk</text>
+
+          <!-- byte -->
+          <rect class="d-box" x="140" y="52" width="58" height="40" rx="2"/>
+          <rect class="d-box" x="198" y="52" width="58" height="40" rx="2"/>
+          <text class="d-m" x="169" y="70" text-anchor="middle">pixel</text>
+          <text class="d-m" x="169" y="84" text-anchor="middle">[7:4]</text>
+          <text class="d-m" x="227" y="70" text-anchor="middle">weight</text>
+          <text class="d-m" x="227" y="84" text-anchor="middle">[3:0]</text>
+          <text class="d-head" x="140" y="42">ui_in[7:0]</text>
+
+          <!-- mux -->
+          <path class="d-line" d="M198 72 H262 V118 H300" marker-end="url(#bh)"/>
+          <path class="d-box-a" d="M300 100 L326 108 L326 152 L300 160 Z"/>
+          <text class="d-m" x="313" y="134" text-anchor="middle" style="fill:var(--accent-ink)">mux</text>
+          <path class="d-line" d="M256 72 H400 V112" marker-end="url(#bh)"/>
+          <text class="d-lab" x="330" y="66">w</text>
+
+          <!-- mac -->
+          <path class="d-line" d="M326 130 H382" marker-end="url(#bh)"/>
+          <text class="d-lab" x="330" y="124">a</text>
+          <rect class="d-box" x="382" y="112" width="80" height="38" rx="2"/>
+          <text class="d-t" x="422" y="130" text-anchor="middle">4×4 mult</text>
+          <text class="d-m" x="422" y="144" text-anchor="middle">→ int8</text>
+
+          <path class="d-line" d="M462 131 H508" marker-end="url(#bh)"/>
+          <circle class="d-box" cx="524" cy="131" r="16"/>
+          <text class="d-t" x="524" y="136" text-anchor="middle">+</text>
+          <path class="d-line" d="M540 131 H592" marker-end="url(#bh)"/>
+          <rect class="d-box-a" x="592" y="110" width="104" height="42" rx="2"/>
+          <text class="d-m" x="644" y="128" text-anchor="middle" style="fill:var(--accent-ink)">acc</text>
+          <text class="d-m" x="644" y="143" text-anchor="middle" style="fill:var(--accent-ink)">int20</text>
+          <path class="d-line" d="M644 152 V172 H524 V147" marker-end="url(#bh)"/>
+          <text class="d-lab" x="546" y="168">feedback</text>
+
+          <!-- bias -->
+          <path class="d-dash" d="M256 92 V212 H592 V148"/>
+          <text class="d-lab" x="300" y="208">LOAD_ACC — 3 bytes shift straight into acc</text>
+
+          <!-- requant path -->
+          <path class="d-line-a" d="M696 131 H740 V232 H596" marker-end="url(#bha)"/>
+          <text class="d-a" x="704" y="180">NEURON_DONE</text>
+          <rect class="d-box" x="470" y="214" width="126" height="38" rx="2"/>
+          <text class="d-t" x="533" y="232" text-anchor="middle">acc &gt;&gt; s</text>
+          <text class="d-m" x="533" y="246" text-anchor="middle">clamp 0…15</text>
+          <path class="d-line" d="M470 233 H400" marker-end="url(#bh)"/>
+          <rect class="d-fill" x="274" y="214" width="126" height="38" rx="2"/>
+          <text class="d-m" x="337" y="232" text-anchor="middle">hidden[0…15]</text>
+          <text class="d-m" x="337" y="246" text-anchor="middle">16 × uint4</text>
+          <path class="d-line" d="M290 214 V166 H313 V160" marker-end="url(#bh)"/>
+          <text class="d-lab" x="180" y="190">layer-2 activation</text>
+
+          <!-- argmax -->
+          <path class="d-line" d="M696 131 H760 V86" marker-end="url(#bh)"/>
+          <rect class="d-box" x="702" y="46" width="116" height="40" rx="2"/>
+          <text class="d-t" x="760" y="64" text-anchor="middle">acc &gt; best?</text>
+          <text class="d-m" x="760" y="78" text-anchor="middle">keep class only</text>
+          <text class="d-a" x="702" y="106">CLASS_DONE</text>
+          <path class="d-line" d="M760 46 V22 H852" marker-end="url(#bh)"/>
+          <text class="d-head" x="770" y="16">uo_out[3:0]</text>
+
+          <!-- state legend -->
+          <line class="d-dash" x1="0" y1="286" x2="860" y2="286"/>
+          <text class="d-lab" x="0" y="306">Solid: layer-1 flow.</text>
+          <text class="d-lab" x="150" y="306">Teal: end-of-neuron and end-of-class commands.</text>
+          <text class="d-lab" x="520" y="306">Dashed: the bias path, which reuses the accumulator as a shift register.</text>
+
+          <defs>
+            <marker id="bh" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="currentColor"/>
+            </marker>
+            <marker id="bha" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="var(--accent)"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Everything wide is shared.</b> The 20-bit adder, the accumulator and the
+        shift-and-clamp block are each instantiated once. The only per-neuron storage
+        is 4 bits.
+      </figcaption>
+    </figure>
+
+    <h3>On-chip state, 138 flip-flops</h3>
+    <div class="scroller">
+      <table>
+        <caption>Register inventory, HIDDEN = 16</caption>
+        <thead><tr><th>Register</th><th class="num">Bits</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>acc</code></td><td class="num">20</td><td>Shared by layer 1, layer 2 and the bias shift-in</td></tr>
+          <tr><td><code>hidden[16]</code></td><td class="num">64</td><td>Layer-1 activations, 4 bits each</td></tr>
+          <tr><td><code>best_score</code></td><td class="num">20</td><td>Running argmax — no score vector is stored</td></tr>
+          <tr><td><code>best_class</code>, <code>class_idx</code>, <code>h_idx</code></td><td class="num">12</td><td>Output class and the two loop counters</td></tr>
+          <tr><td><code>shift1</code></td><td class="num">4</td><td>Requantisation shift, set by the host</td></tr>
+          <tr><td><code>state</code>, <code>ret_state</code>, <code>bias_cnt</code></td><td class="num">6</td><td>Three-state FSM plus the bias byte counter</td></tr>
+          <tr><td><code>result_valid</code>, <code>acc_ovf</code>, <code>ack</code></td><td class="num">3</td><td>Status flags on the output pins</td></tr>
+          <tr><td><code>dbg_out</code>, <code>dbg_en</code></td><td class="num">5</td><td>Hidden-activation readback for bring-up</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Sequential logic accounts for 6 760 µm² — <strong>43 % of the total cell
+      area</strong>. That single number sets the priorities for every optimisation in
+      section 08: flip-flops are the budget, not gates.
+    </p>
+  </section>
+
+  <!-- 04 -->
+  <section id="arithmetic">
+    <span class="secno">04 — Arithmetic</span>
+    <h2>W4A4, and the accumulator is wider than it needs to be on purpose</h2>
+    <div class="scroller">
+      <table>
+        <caption>Number formats — identical in the RTL and in training</caption>
+        <thead><tr><th>Value</th><th>Format</th><th class="num">Range</th><th class="num">Measured</th></tr></thead>
+        <tbody>
+          <tr><td>Input pixel</td><td><code>uint4</code></td><td class="num">0 … 15</td><td class="num">0 … 15</td></tr>
+          <tr><td>Weight</td><td><code>int4</code> two's complement</td><td class="num">−8 … +7</td><td class="num">−8 … +7</td></tr>
+          <tr><td>Product</td><td><code>int8</code></td><td class="num">−120 … +105</td><td class="num">—</td></tr>
+          <tr><td>Layer-1 accumulator</td><td><code>int20</code></td><td class="num">±94 080 worst case</td><td class="num">−3 839 … 5 118</td></tr>
+          <tr><td>Hidden activation</td><td><code>uint4</code></td><td class="num">0 … 15</td><td class="num">0 … 15</td></tr>
+          <tr><td>Class score</td><td><code>int20</code></td><td class="num">±2 000 + bias</td><td class="num">−427 … 322</td></tr>
+          <tr><td>Result</td><td>4-bit class</td><td class="num">0 … 9</td><td class="num">0 … 9</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Requantisation between the layers is a wire shift and a clamp — never a
+      multiply by a floating-point scale:
+    </p>
+<pre><code>hidden[n] = acc &lt; 0 ? 0
+          : min(15, acc &gt;&gt; shift1)</code></pre>
+    <p>
+      Twenty bits is the worst-case-safe width for <em>any</em> int4 weight set:
+      784 × 15 × 8 = 94 080 needs 18 bits, and the loadable bias needs headroom above
+      that. The trained model only ever reaches 5 118, which is where the
+      <code>ACC_W = 16</code> option in section 08 comes from — it is safe for this
+      weight set, and the sticky overflow flag on <code>uo_out[6]</code> is what
+      guards the assumption if you retrain.
+    </p>
+  </section>
+
+  <!-- 05 -->
+  <section id="interface">
+    <span class="secno">05 — Host interface</span>
+    <h2>One byte per clock, and the host may stall whenever it likes</h2>
+    <p>
+      <code>uio[0]</code> is <code>in_valid</code>, <code>uio[1]</code> is
+      <code>is_cmd</code>. A byte is consumed on any rising edge where
+      <code>in_valid</code> is high. There is no backpressure to honour — the chip
+      always keeps up — so a host that can only manage one byte every ten cycles
+      simply runs ten times slower, with no protocol change.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <caption>Pin assignment</caption>
+        <thead><tr><th>Pins</th><th>Direction</th><th>Function</th></tr></thead>
+        <tbody>
+          <tr><td><code>ui_in[7:0]</code></td><td>in</td><td>Command or data byte. As data in layer 1: <code>{pixel[3:0], weight[3:0]}</code></td></tr>
+          <tr><td><code>uio[0]</code></td><td>in</td><td><code>in_valid</code></td></tr>
+          <tr><td><code>uio[1]</code></td><td>in</td><td><code>is_cmd</code> — 1 marks a command byte</td></tr>
+          <tr><td><code>uo_out[3:0]</code></td><td>out</td><td>Predicted digit, or a hidden activation during readback</td></tr>
+          <tr><td><code>uo_out[4]</code></td><td>out</td><td><code>result_valid</code></td></tr>
+          <tr><td><code>uo_out[5]</code></td><td>out</td><td>In layer 2 — progress indicator</td></tr>
+          <tr><td><code>uo_out[6]</code></td><td>out</td><td>Sticky accumulator overflow — must stay low</td></tr>
+          <tr><td><code>uo_out[7]</code></td><td>out</td><td><code>ack</code>, registered <code>in_valid</code></td></tr>
+          <tr><td><code>uio[7:2]</code></td><td>out</td><td>Debug: hidden index and FSM state</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Command set</h3>
+    <p>A command byte is <code>{opcode[3:0], imm[3:0]}</code>. Eleven opcodes, no addressing modes, no registers to configure beyond the shift.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Op</th><th>Name</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>0x1</code></td><td>RESET</td><td>Clear the accumulator, hidden registers, argmax and flags</td></tr>
+          <tr><td><code>0x2</code></td><td>SET_SHIFT</td><td><code>shift1 = imm</code></td></tr>
+          <tr><td><code>0x3</code></td><td>LOAD_ACC</td><td>Next 3 data bytes are a 20-bit bias, MSB first</td></tr>
+          <tr><td><code>0x5</code></td><td>NEURON_DONE</td><td><code>hidden[i++] = clamp(acc &gt;&gt; shift1, 0, 15)</code></td></tr>
+          <tr><td><code>0x6</code></td><td>START_L2</td><td>Switch the activation mux to the hidden register file</td></tr>
+          <tr><td><code>0x7</code></td><td>CLASS_DONE</td><td>Argmax update, advance the class counter</td></tr>
+          <tr><td><code>0x8</code></td><td>FINISH</td><td>Raise <code>result_valid</code></td></tr>
+          <tr><td><code>0x9</code> / <code>0xA</code></td><td>RD_HIDDEN / DBG_OFF</td><td>Drive <code>hidden[imm]</code> onto the output pins, and back</td></tr>
+          <tr><td><code>0x0</code> / <code>0x4</code></td><td>NOP / ZERO_ACC</td><td>Do nothing; clear the accumulator</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What one inference looks like</h3>
+<pre><code><span class="kw">RESET</span>, <span class="kw">SET_SHIFT</span>(6)
+<span class="cmt">for n in 0..15:</span>
+    <span class="kw">LOAD_ACC</span>, bias1[n]                  <span class="cmt">3 bytes</span>
+    784 × data{ pixel[p], w1[n][p] }     <span class="cmt">784 bytes, one MAC each</span>
+    <span class="kw">NEURON_DONE</span>
+<span class="kw">START_L2</span>
+<span class="cmt">for c in 0..9:</span>
+    <span class="kw">LOAD_ACC</span>, bias2[c]                  <span class="cmt">3 bytes</span>
+    16 × data{ w2[c][h] }
+    <span class="kw">CLASS_DONE</span>
+<span class="kw">FINISH</span>                                   <span class="cmt">12 838 bytes total</span></code></pre>
+    <p>
+      12 838 clocks at 50 MHz is 257 µs per image, or 3 895 images per second.
+      Layer 2 is 160 of those bytes; the first layer is 97.7 % of the work, which is
+      exactly the ratio you would expect from 12 544 versus 160 multiply-accumulates.
+    </p>
+  </section>
+
+  <!-- 06 -->
+  <section id="training">
+    <span class="secno">06 — Training</span>
+    <h2>The training forward pass <em>is</em> the hardware</h2>
+    <p>
+      The usual failure mode for a quantised accelerator is a model that scores 96 %
+      in the framework and 89 % in silicon, because the rounding, scaling and
+      saturation semantics drifted apart somewhere between the two. The way to not
+      have that problem is to not have two sets of semantics.
+    </p>
+    <p>
+      Training runs custom straight-through estimators rather than a quantisation
+      library. Brevitas and TorchAO both pick their own floating-point scales, which
+      you then have to reverse-engineer into a shift; here the forward pass literally
+      executes <code>clamp(floor(acc / 2^s), 0, 15)</code> on integer weights, so the
+      exported values need no conversion step at all. Three estimators cover it:
+    </p>
+    <ul>
+      <li><strong>Weights</strong> — <code>clamp(round(w), −8, 7)</code> forward, clipped pass-through backward, with the latent float weight clamped after each step.</li>
+      <li><strong>Activations</strong> — <code>clamp(floor(acc / 2^s), 0, 15)</code> forward, gradient <code>1/2^s</code> gated to the representable band.</li>
+      <li><strong>Biases</strong> — parameterised in output units so their gradients have sane magnitude, then rounded into accumulator units.</li>
+    </ul>
+    <p>
+      A learnable logit temperature keeps cross-entropy well conditioned against
+      scores in the hundreds. It divides all ten logits equally, so it cannot change
+      the argmax and it costs nothing in silicon.
+    </p>
+    <p>
+      The requantisation shift is calibrated once from the 99th percentile of the
+      layer-1 pre-activations at initialisation, then frozen: 6 for the int4 models,
+      4 for ternary. Sixty epochs takes about a minute on a CPU.
+    </p>
+    <div class="note">
+      <h4>The 4-bit activation range is genuinely the bottleneck</h4>
+      <p>
+        In the trained HIDDEN = 16 model, 38.5 % of hidden activations read zero and
+        17.3 % saturate at 15. The available range is fully used in both directions,
+        which is what you want from QAT — and it also says plainly where the
+        remaining accuracy went. Widening activations to 5 bits, not adding neurons,
+        is the next thing to try if 95.5 % is not enough.
+      </p>
+    </div>
+  </section>
+
+  <!-- 07 -->
+  <section id="results">
+    <span class="secno">07 — Results</span>
+    <h2>Accuracy against area, measured on the real cell library</h2>
+    <p>
+      Accuracy is the full 10 000-image MNIST test set through the integer model.
+      Area is post-synthesis cell area from Yosys against the IHP
+      <code>sg13g2</code> liberty — not an estimate. Select a configuration to see it
+      drawn into the tile.
+    </p>
+
+    <div class="explorer">
+      <div class="tabs" role="group" aria-label="Configuration"></div>
+      <div class="exp-body">
+        <div class="exp-vis">
+          <svg id="tile" viewBox="0 0 202.08 154.98" role="img" aria-label="The 1x1 tile drawn to scale with standard-cell rows filled to the selected configuration's utilisation."></svg>
+          <div class="exp-scale">
+            <span>0 µm</span><span>41 cell rows × 3.78 µm</span><span>202.08 µm</span>
+          </div>
+        </div>
+        <dl class="exp-stats">
+          <div class="stat"><dt>Tile utilisation</dt><dd id="s-util"></dd></div>
+          <div class="stat"><dt>Cell area</dt><dd id="s-area"></dd></div>
+          <div class="stat"><dt>Test accuracy</dt><dd id="s-acc"></dd></div>
+          <div class="stat"><dt>Cells / flops</dt><dd id="s-cells"></dd></div>
+          <div class="stat"><dt>Latency</dt><dd id="s-lat"></dd></div>
+          <div class="stat"><dt>Throughput</dt><dd id="s-ips"></dd></div>
+        </dl>
+      </div>
+      <div class="exp-foot"><span id="s-pill"></span><span id="s-note"></span></div>
+    </div>
+
+    <div class="scroller">
+      <table style="margin-top:34px">
+        <caption>All measured configurations</caption>
+        <thead>
+          <tr>
+            <th>Configuration</th><th class="num">Accuracy</th><th class="num">Cells</th>
+            <th class="num">Flops</th><th class="num">Area µm²</th><th class="num">Tile util</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>W4A4, HIDDEN = 8</td><td class="num">92.15 %</td><td class="num">829</td><td class="num">104</td><td class="num">12 430</td><td class="num">39.7 %</td></tr>
+          <tr class="hi"><td>W4A4, HIDDEN = 16 — <b>default</b></td><td class="num">95.47 %</td><td class="num">998</td><td class="num">138</td><td class="num">15 688</td><td class="num">50.1 %</td></tr>
+          <tr><td>W4A4, HIDDEN = 32</td><td class="num">97.13 %</td><td class="num">1 246</td><td class="num">204</td><td class="num">21 246</td><td class="num">67.8 %</td></tr>
+          <tr><td>Ternary, HIDDEN = 8</td><td class="num">87.30 %</td><td class="num">770</td><td class="num">104</td><td class="num">11 904</td><td class="num">38.0 %</td></tr>
+          <tr><td>Ternary, HIDDEN = 16</td><td class="num">92.76 %</td><td class="num">1 005</td><td class="num">138</td><td class="num">15 197</td><td class="num">48.5 %</td></tr>
+          <tr><td>Ternary, HIDDEN = 32</td><td class="num">95.55 %</td><td class="num">1 255</td><td class="num">204</td><td class="num">20 803</td><td class="num">66.4 %</td></tr>
+          <tr><td>H = 16, <code>SHIFT_FIXED=6</code></td><td class="num">95.47 %</td><td class="num">893</td><td class="num">134</td><td class="num">14 596</td><td class="num">46.6 %</td></tr>
+          <tr><td>H = 16, <code>ACC_W=16</code></td><td class="num">95.47 %</td><td class="num">912</td><td class="num">130</td><td class="num">14 555</td><td class="num">46.5 %</td></tr>
+          <tr><td>H = 16, both trims</td><td class="num">95.47 %</td><td class="num">843</td><td class="num">126</td><td class="num">13 622</td><td class="num">43.5 %</td></tr>
+          <tr><td>H = 32, <code>SHIFT_FIXED=6</code></td><td class="num">97.13 %</td><td class="num">1 158</td><td class="num">200</td><td class="num">20 003</td><td class="num">63.9 %</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>HIDDEN = 16 ships.</strong> Fifty per cent utilisation leaves real room
+      for clock-tree synthesis, buffering and routing under the template's 60 %
+      density target. HIDDEN = 32 buys 1.7 accuracy points but wants density pushed
+      to about 70 %, which is where ttihp 1×1 routing starts to get unhappy — a
+      second-silicon goal, not a first one.
+    </p>
+  </section>
+
+  <!-- 08 -->
+  <section id="surprises">
+    <span class="secno">08 — What measurement changed</span>
+    <h2>Two things the plan got wrong</h2>
+
+    <h3>Ternary weights are not the win</h3>
+    <p>
+      The original plan assumed a ternary <code>{−1, 0, +1}</code> datapath would be
+      the big area saving, because it removes the multiplier entirely. It was built,
+      tested and measured. It saves <strong>491 µm², or 3.1 %</strong>.
+    </p>
+    <p>
+      The multiplier was never the cost. A 4×4 signed multiply is a few dozen gates;
+      the area is in flip-flops, the hidden register file's muxing, and the variable
+      barrel shifter. Meanwhile ternary costs 2.7 accuracy points at the same width.
+    </p>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="sub">Same width, HIDDEN = 16</div>
+        <div class="metric" style="color:var(--accent-ink)">95.47 % <span style="font-size:19px;color:var(--ink-2)">vs</span> 92.76 %</div>
+        <h4>W4A4 wins outright</h4>
+        <p>For 491 µm² more — 3.1 % of the design — you get 2.7 accuracy points. Keep the multiplier.</p>
+      </div>
+      <div class="card">
+        <div class="sub">Equal accuracy</div>
+        <div class="metric">15 688 <span style="font-size:19px;color:var(--ink-2)">vs</span> 20 803 µm²</div>
+        <h4>Ternary needs 32 neurons to catch up</h4>
+        <p>Ternary at HIDDEN = 32 reaches 95.55 % — a statistical tie — using 25 % more area.</p>
+      </div>
+    </div>
+
+    <p>
+      The cheap savings are elsewhere. Hard-wiring the requantisation shift
+      (<code>SHIFT_FIXED=6</code>) deletes the 20-bit barrel shifter for
+      −1 092 µm². Narrowing the accumulator to 16 bits, which the measured value
+      range in section 04 permits, saves another 1 133 µm². Together they take the
+      shipping configuration from 50.1 % to <strong>43.5 % utilisation at identical
+      accuracy</strong>. Both are verified in simulation against the same
+      image-by-image comparison. The price is flexibility: a hard-wired shift means
+      you cannot retune it after tape-out, and a 16-bit accumulator is only
+      worst-case-safe if you keep the weight distribution you trained.
+    </p>
+
+    <h3>It is not fast, and that was never the point</h3>
+    <p>
+      On the same laptop that trained it, PyTorch runs one image through the
+      equivalent float network in 7.6 µs on a single CPU thread — <strong>34× faster
+      than the chip</strong>, and batched it is three orders of magnitude faster
+      still. Anyone comparing wall-clock times will conclude the ASIC is pointless.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <caption>One image, 784→16→10</caption>
+        <thead><tr><th>Implementation</th><th class="num">Per image</th><th class="num">Images / s</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>PyTorch fp32, batch = 10 000</td><td class="num">0.08 µs</td><td class="num">12 100 000</td><td>Amortised, one CPU thread</td></tr>
+          <tr><td>PyTorch fp32, batch = 1</td><td class="num">7.6 µs</td><td class="num">132 000</td><td>Dominated by framework overhead</td></tr>
+          <tr><td>NumPy integer, batch = 1</td><td class="num">8.2 µs</td><td class="num">121 000</td><td>The golden model</td></tr>
+          <tr class="hi"><td>This ASIC at 50 MHz</td><td class="num">257 µs</td><td class="num">3 895</td><td>12 838 clocks, one MAC each</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The honest framing is that the comparison is not speed, it is what the silicon
+      costs. This is 0.031 mm² on a shared shuttle, running one multiply-accumulate
+      per clock at 50 MHz because that is what an 8-bit host port delivers — the
+      datapath is interface-bound, not compute-bound. Widen the port or clock it
+      faster and the same design scales linearly, with no change to the architecture.
+    </p>
+  </section>
+
+  <!-- 09 -->
+  <section id="scaling">
+    <span class="secno">09 — Scaling limits</span>
+    <h2>Where this stops working, and why it isn't the obvious place</h2>
+    <p class="lead">
+      MNIST makes the design look like it scales by making the network bigger. It
+      does not. There are three ceilings, and they bind in an order that catches
+      people out — the one that decides what is actually possible has nothing to do
+      with how much silicon is left, and nothing to do with the 4-bit arithmetic
+      either.
+    </p>
+
+    <h3>Ceiling 1 — persistent activation state</h3>
+    <p>
+      The only thing the chip must hold is activations that outlive a layer. Pushing
+      HIDDEN past the shipped configuration shows exactly where that runs out.
+    </p>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 860 320" role="img" aria-label="Cell area grows linearly with hidden layer width at about 86 square micrometres per activation bit. HIDDEN=8, 16 and 32 sit below the 60 percent density budget or near it; HIDDEN=64 at 32207 square micrometres exceeds the entire tile area of 31318.">
+          <!-- axes -->
+          <line class="d-line" x1="70" y1="40" x2="70" y2="250"/>
+          <line class="d-line" x1="70" y1="250" x2="830" y2="250"/>
+          <text class="d-head" x="70" y="26">CELL AREA µm²</text>
+          <text class="d-head" x="830" y="278" text-anchor="end">HIDDEN</text>
+
+          <!-- gridlines -->
+          <line class="d-dash" x1="70" y1="137.3" x2="830" y2="137.3"/>
+          <text class="d-lab" x="826" y="132" text-anchor="end">18 791 — 60 % density budget</text>
+          <line class="d-dash" x1="70" y1="62.1" x2="830" y2="62.1" style="opacity:.9"/>
+          <text class="d-lab" x="826" y="57" text-anchor="end">31 318 — the whole tile</text>
+
+          <!-- y ticks -->
+          <text class="d-m" x="62" y="254" text-anchor="end">0</text>
+          <text class="d-m" x="62" y="184" text-anchor="end">11k</text>
+          <text class="d-m" x="62" y="124" text-anchor="end">21k</text>
+          <text class="d-m" x="62" y="64" text-anchor="end">31k</text>
+
+          <!-- data -->
+          <polyline class="d-line-a" points="70,175.4 320,155.9 570,122.5 820,56.8"/>
+          <g>
+            <circle cx="70"  cy="175.4" r="4.5" fill="var(--accent)"/>
+            <circle cx="320" cy="155.9" r="6" fill="var(--accent)"/>
+            <circle cx="570" cy="122.5" r="4.5" fill="var(--accent)"/>
+            <circle cx="820" cy="56.8"  r="4.5" fill="var(--over)"/>
+          </g>
+          <text class="d-m" x="78"  y="172">12 430</text>
+          <text class="d-m" x="328" y="152">15 688</text>
+          <text class="d-m" x="530" y="112" text-anchor="end">21 250</text>
+          <text class="d-m" x="812" y="48" text-anchor="end" style="fill:var(--over)">32 207 — does not fit</text>
+          <text class="d-a" x="328" y="168">shipped</text>
+
+          <text class="d-m" x="70"  y="268" text-anchor="middle">8</text>
+          <text class="d-m" x="320" y="268" text-anchor="middle">16</text>
+          <text class="d-m" x="570" y="268" text-anchor="middle">32</text>
+          <text class="d-m" x="820" y="268" text-anchor="middle">64</text>
+
+          <line class="d-dash" x1="0" y1="292" x2="860" y2="292"/>
+          <text class="d-lab" x="0" y="312">Slope 86 µm² per activation bit — about 1.8× a bare flip-flop, because the register-file muxing grows with it.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Dead linear, on a fixed base of ~10 100 µm².</b> The budget allows roughly
+        <b>100–150 bits of persistent state</b> — 25 to 38 four-bit activations.
+        HIDDEN = 64 does not fit the tile at any placement density.
+      </figcaption>
+    </figure>
+
+    <h3>Ceiling 2 — the design throws away every bit of weight reuse</h3>
+    <p>
+      This is the ceiling that actually decides what is possible, and it is not an
+      area limit at all. Because the chip stores no weights, every multiply-accumulate
+      needs a fresh weight nibble off the pins. For a dense layer each weight is used
+      exactly once per image, so streaming wastes nothing — that is precisely
+      <em>why</em> MNIST works so well here. A convolution reuses each kernel weight
+      at every spatial position, and this architecture re-sends all of them.
+    </p>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 860 226" role="img" aria-label="A dense layer's 784 weights are each used once, so the host sends 784 bytes for 784 multiply-accumulates: no waste. A 3x3x3 convolution kernel has 27 unique weights applied at 1024 spatial positions, so the host must send 27648 bytes for the same 27 weights, re-sending each one 1024 times.">
+          <text class="d-head" x="0" y="14">DENSE LAYER — STREAMING IS OPTIMAL</text>
+          <text class="d-head" x="460" y="14">CONVOLUTION — STREAMING IS THE BOTTLENECK</text>
+          <line class="d-dash" x1="428" y1="0" x2="428" y2="226"/>
+
+          <!-- dense -->
+          <g>
+            <rect class="d-fill" x="0" y="40" width="9" height="9" rx="1"/>
+            <rect class="d-fill" x="12" y="40" width="9" height="9" rx="1"/>
+            <rect class="d-fill" x="24" y="40" width="9" height="9" rx="1"/>
+            <rect class="d-fill" x="36" y="40" width="9" height="9" rx="1"/>
+            <rect class="d-fill" x="48" y="40" width="9" height="9" rx="1"/>
+            <rect class="d-fill" x="60" y="40" width="9" height="9" rx="1"/>
+            <text class="d-m" x="76" y="49">… 784 weights</text>
+          </g>
+          <path class="d-line" d="M70 62 V88 H160" marker-end="url(#dh)"/>
+          <text class="d-lab" x="6" y="82">each used exactly once</text>
+          <rect class="d-box" x="160" y="70" width="70" height="36" rx="2"/>
+          <text class="d-t" x="195" y="93" text-anchor="middle">MAC</text>
+          <rect x="0" y="132" width="388" height="1" fill="currentColor" opacity=".18"/>
+          <text class="d-tb" x="0" y="156">784 bytes sent · 784 MACs</text>
+          <text class="d-t" x="0" y="180">Reuse factor 1×. There is nothing a weight</text>
+          <text class="d-t" x="0" y="197">cache could have saved, so having none</text>
+          <text class="d-t" x="0" y="214">costs exactly zero.</text>
+
+          <!-- conv -->
+          <g>
+            <rect class="d-box-a" x="460" y="34" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="474" y="34" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="488" y="34" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="460" y="48" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="474" y="48" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="488" y="48" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="460" y="62" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="474" y="62" width="11" height="11" rx="1"/>
+            <rect class="d-box-a" x="488" y="62" width="11" height="11" rx="1"/>
+          </g>
+          <text class="d-m" x="510" y="48">3×3×3 kernel</text>
+          <text class="d-m" x="510" y="64">27 unique weights</text>
+          <path class="d-line-a" d="M499 88 H612" marker-end="url(#dha)"/>
+          <text class="d-a" x="510" y="82">re-sent at 1 024 positions</text>
+          <rect class="d-box" x="612" y="70" width="70" height="36" rx="2"/>
+          <text class="d-t" x="647" y="93" text-anchor="middle">MAC</text>
+          <path class="d-line" d="M682 88 H752" marker-end="url(#dh)"/>
+          <rect class="d-fill" x="752" y="70" width="100" height="36" rx="2"/>
+          <text class="d-m" x="802" y="93" text-anchor="middle">32×32 output</text>
+          <rect x="460" y="132" width="400" height="1" fill="currentColor" opacity=".18"/>
+          <text class="d-tb" x="460" y="156" style="fill:var(--over)">27 648 bytes sent · 27 unique weights</text>
+          <text class="d-t" x="460" y="180">Reuse factor 1 024×, all of it discarded.</text>
+          <text class="d-t" x="460" y="197">Capturing it needs on-chip weight storage,</text>
+          <text class="d-t" x="460" y="214">and ceiling 1 allows about 100 bits.</text>
+
+          <defs>
+            <marker id="dh" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="currentColor"/>
+            </marker>
+            <marker id="dha" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="var(--accent)"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The two ceilings are the same ceiling.</b> Exploiting convolutional reuse
+        requires local weight storage; the activation-state measurement says there is
+        room for roughly one hundred bits. A single 3×3×3 kernel is 108.
+      </figcaption>
+    </figure>
+
+    <div class="scroller">
+      <table>
+        <caption>What one image costs, at one MAC per clock and 50 MHz</caption>
+        <thead>
+          <tr>
+            <th>Network</th><th class="num">MACs</th><th class="num">Params</th>
+            <th class="num">Reuse lost</th><th class="num">Latency</th><th class="num">Host traffic</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="hi"><td>MNIST dense 784-16-10</td><td class="num">0.013 M</td><td class="num">0.013 M</td><td class="num">1×</td><td class="num">254 µs</td><td class="num">0.01 MB</td></tr>
+          <tr><td>MNIST dense 784-32-10</td><td class="num">0.025 M</td><td class="num">0.025 M</td><td class="num">1×</td><td class="num">508 µs</td><td class="num">0.03 MB</td></tr>
+          <tr><td>CIFAR-10 dense 3072-32-10</td><td class="num">0.099 M</td><td class="num">0.099 M</td><td class="num">1×</td><td class="num">2 ms</td><td class="num">0.10 MB</td></tr>
+          <tr><td>CIFAR-10 tiny CNN, 3 conv</td><td class="num">2.81 M</td><td class="num">0.034 M</td><td class="num">83×</td><td class="num">56 ms</td><td class="num">2.8 MB</td></tr>
+          <tr><td>CIFAR-10 ResNet-20</td><td class="num">41 M</td><td class="num">0.27 M</td><td class="num">152×</td><td class="num">0.82 s</td><td class="num">41 MB</td></tr>
+          <tr><td>TinyImageNet ResNet-18 @64²</td><td class="num">149 M</td><td class="num">11.7 M</td><td class="num">13×</td><td class="num">3.0 s</td><td class="num">149 MB</td></tr>
+          <tr><td>ImageNet MobileNetV2</td><td class="num">300 M</td><td class="num">3.4 M</td><td class="num">88×</td><td class="num">6.0 s</td><td class="num">300 MB</td></tr>
+          <tr><td>ImageNet ResNet-50</td><td class="num">4 100 M</td><td class="num">25.6 M</td><td class="num">160×</td><td class="num">82 s</td><td class="num">4 100 MB</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Ceiling 3 — eight input pins is one MAC per clock</h3>
+    <p>
+      Four bits of activation plus four bits of weight fills the dedicated input port
+      exactly. Repurposing the six spare <code>uio</code> bits as inputs gets you to
+      about 1.75 MACs per clock and no further. The datapath is interface-bound, not
+      compute-bound — which is also why every latency in the table above is simply
+      the MAC count divided by 50 MHz.
+    </p>
+
+    <h3>The escape hatch: stop storing activations at all</h3>
+    <p>
+      Ceiling 1 only exists because the hidden layer lives on chip. Add one opcode
+      that streams the accumulator back out as nibbles — <code>READ_ACC</code> — and
+      the host holds every activation instead. The chip stops being a two-layer MLP
+      and becomes a general streaming dot-product engine that can serve any topology,
+      convolutions included.
+    </p>
+    <p>
+      It was prototyped and synthesised to cost the claim rather than guess it:
+      <strong>262 µm², 1.7 %</strong>. It is not in the shipped RTL — the MNIST design
+      does not need it — but the measurements say what it would buy.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <caption>Prototype branch — accumulator readout</caption>
+        <thead><tr><th>Variant</th><th class="num">Cells</th><th class="num">Flops</th><th class="num">Area µm²</th><th class="num">Tile util</th></tr></thead>
+        <tbody>
+          <tr><td>HIDDEN = 16, shipped</td><td class="num">998</td><td class="num">138</td><td class="num">15 688</td><td class="num">50.1 %</td></tr>
+          <tr><td>HIDDEN = 16 + <code>READ_ACC</code></td><td class="num">1 067</td><td class="num">138</td><td class="num">15 950</td><td class="num">50.9 %</td></tr>
+          <tr><td>HIDDEN = 16 + <code>READ_ACC</code> + both trims</td><td class="num">852</td><td class="num">126</td><td class="num">13 505</td><td class="num">43.1 %</td></tr>
+          <tr><td>HIDDEN = 32 + <code>READ_ACC</code> + both trims</td><td class="num">1 134</td><td class="num">192</td><td class="num">19 042</td><td class="num">60.8 %</td></tr>
+          <tr class="hi"><td>HIDDEN = 2 — pure MAC engine</td><td class="num">565</td><td class="num">64</td><td class="num">7 867</td><td class="num">25.1 %</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      At 25 % utilisation the state ceiling is gone entirely and three quarters of the
+      tile is free. What remains is ceiling 2 and ceiling 3, which no amount of spare
+      area fixes: the free space would buy roughly 220 flip-flops of weight cache —
+      about 900 bits — against convolutions that want to reuse kernels tens of
+      thousands of times.
+    </p>
+
+    <h3>Measured: what CIFAR-10 actually gives you</h3>
+    <p>
+      Rather than assume, the same arithmetic was trained on CIFAR-10 — identical
+      estimators, identical requantisation, only the input width changed from 784
+      greyscale values to 3072 RGB ones. The 20-bit accumulator still holds:
+      3072 × 15 × 8 = 368 640 stays inside ±524 287, asserted throughout the run.
+    </p>
+    <div class="scroller">
+      <table>
+        <caption>CIFAR-10 test accuracy, 40 epochs each, same W4A4 arithmetic as the shipped design</caption>
+        <thead><tr><th>Topology</th><th class="num">Shift</th><th class="num">Test accuracy</th><th>Fits a 1×1 tile?</th></tr></thead>
+        <tbody>
+          <tr><td>dense 3072-16-10</td><td class="num">8</td><td class="num">42.05 %</td><td><span class="pill ok">Yes, 50 %</span></td></tr>
+          <tr class="hi"><td>dense 3072-32-10</td><td class="num">7</td><td class="num">46.06 %</td><td><span class="pill watch">68 %, tight</span></td></tr>
+          <tr><td>dense 3072-64-10</td><td class="num">8</td><td class="num">48.22 %</td><td><span class="pill over">No — 103 %</span></td></tr>
+          <tr><td>dense 1024-32-10, greyscale</td><td class="num">7</td><td class="num">37.92 %</td><td><span class="pill watch">68 %, tight</span></td></tr>
+          <tr><td><em>float32</em> dense 3072-32-10</td><td class="num">—</td><td class="num">41.11 %</td><td>reference only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>The quantisation is not what is costing you.</strong> A float network of
+      the identical topology, given the same training budget, lands at 41.11 % —
+      below the 4-bit version. That float figure is a deliberately unoptimised
+      baseline, not a ceiling; well-tuned float MLPs on CIFAR-10 reach the mid-fifties.
+      But the direction of the result is unambiguous either way: dropping to
+      <code>W4A4</code> costs roughly nothing here, and doubling the hidden layer buys
+      two points while pushing the design off the tile.
+    </p>
+    <p>
+      A small convolutional network reaches about 90 % on the same data. The 45-point
+      gap is <em>topology</em>, not precision — which is exactly why ceiling 2 is the
+      one that matters. Making the arithmetic more accurate cannot help; only
+      convolution can, and convolution is what this architecture cannot afford.
+    </p>
+
+    <h3>Verdict per dataset</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Target</th><th>Verdict</th><th>The binding constraint</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>MNIST, Fashion-MNIST</td>
+            <td><span class="pill ok">Genuine fit</span></td>
+            <td>Dense, 1× reuse, 254 µs. Nothing is wasted — this is the architecture's niche.</td>
+          </tr>
+          <tr>
+            <td>CIFAR-10, dense</td>
+            <td><span class="pill watch">Runs, pointless</span></td>
+            <td>Measured 46.06 % at 3072-32-10, 2 ms per image. Not a precision problem — the same topology in float does no better. A dense net simply cannot do CIFAR.</td>
+          </tr>
+          <tr>
+            <td>CIFAR-10, small CNN</td>
+            <td><span class="pill watch">Demo only</span></td>
+            <td>Needs <code>READ_ACC</code> and host-held feature maps. 56 ms and 2.8 MB per image to reach roughly 90 % — respectable accuracy, indefensible efficiency.</td>
+          </tr>
+          <tr>
+            <td>TinyImageNet</td>
+            <td><span class="pill over">Out of scope</span></td>
+            <td>3 s and 149 MB per image. Technically executes on the MAC-engine variant. Not a product.</td>
+          </tr>
+          <tr>
+            <td>ImageNet</td>
+            <td><span class="pill over">Wrong unit of silicon</span></td>
+            <td>6 s (MobileNetV2) to 82 s (ResNet-50) per image, and 4.1 GB of pin traffic at the top end. TinyQV already needs 2×2 for a plain RISC-V SoC.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>The niche, stated plainly</h4>
+      <p>
+        This architecture suits networks with <strong>no weight reuse and few
+        persistent activations</strong> — which means dense layers on small inputs.
+        The moment convolution enters, the property that makes the design fit on a
+        1×1 tile, holding no weights at all, is exactly the property that makes it
+        slow. Scaling up is not a matter of adding neurons; it is a different
+        architecture with a weight cache, and a weight cache does not fit.
+      </p>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="verification">
+    <span class="secno">10 — Verification</span>
+    <h2>Four models, three equivalences, no floating point after training</h2>
+    <p>
+      Each link in the chain is checked mechanically, and each one catches a
+      different class of bug.
+    </p>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 860 190" role="img" aria-label="Verification chain: the PyTorch QAT model exports integers to a NumPy integer reference, which is compared against a Python model of the RTL finite state machine, which is compared against the RTL in simulation. Each link is labelled with the class of bug it catches.">
+          <rect class="d-box" x="0" y="44" width="170" height="52" rx="2"/>
+          <text class="d-tb" x="85" y="68" text-anchor="middle">PyTorch QAT</text>
+          <text class="d-m" x="85" y="85" text-anchor="middle">train.py</text>
+
+          <path class="d-line-a" d="M170 70 H228" marker-end="url(#ch)"/>
+          <text class="d-a" x="176" y="62">exports int</text>
+
+          <rect class="d-box" x="228" y="44" width="170" height="52" rx="2"/>
+          <text class="d-tb" x="313" y="68" text-anchor="middle">Integer reference</text>
+          <text class="d-m" x="313" y="85" text-anchor="middle">hw.infer_int</text>
+
+          <path class="d-line-a" d="M398 70 H456" marker-end="url(#ch)"/>
+          <rect class="d-box" x="456" y="44" width="170" height="52" rx="2"/>
+          <text class="d-tb" x="541" y="68" text-anchor="middle">FSM model</text>
+          <text class="d-m" x="541" y="85" text-anchor="middle">hw.StreamModel</text>
+
+          <path class="d-line-a" d="M626 70 H684" marker-end="url(#ch)"/>
+          <rect class="d-box-a" x="684" y="44" width="170" height="52" rx="2"/>
+          <text class="d-tb" x="769" y="68" text-anchor="middle" style="fill:var(--accent-ink)">RTL</text>
+          <text class="d-m" x="769" y="85" text-anchor="middle" style="fill:var(--accent-ink)">cocotb + Icarus</text>
+
+          <line class="d-dash" x1="0" y1="118" x2="860" y2="118"/>
+          <text class="d-lab" x="85" y="140" text-anchor="middle">no scale to invert</text>
+          <text class="d-t" x="85" y="158" text-anchor="middle">weights are already</text>
+          <text class="d-t" x="85" y="174" text-anchor="middle">the silicon's integers</text>
+
+          <text class="d-lab" x="313" y="140" text-anchor="middle">catches wrap and rounding</text>
+          <text class="d-t" x="313" y="158" text-anchor="middle">scalar loop vs vectorised,</text>
+          <text class="d-t" x="313" y="174" text-anchor="middle">on 10 000 images</text>
+
+          <text class="d-lab" x="541" y="140" text-anchor="middle">catches protocol bugs</text>
+          <text class="d-t" x="541" y="158" text-anchor="middle">command order, bias bytes,</text>
+          <text class="d-t" x="541" y="174" text-anchor="middle">counter wrap</text>
+
+          <text class="d-lab" x="769" y="140" text-anchor="middle">catches RTL bugs</text>
+          <text class="d-t" x="769" y="158" text-anchor="middle">every hidden activation</text>
+          <text class="d-t" x="769" y="174" text-anchor="middle">compared, not just the class</text>
+
+          <defs>
+            <marker id="ch" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <polygon points="0,0.8 8,4 0,7.2" fill="var(--accent)"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The third model is the one people skip.</b> A pure-arithmetic reference
+        proves the maths and says nothing about whether the byte stream drives the
+        state machine correctly. <code>StreamModel</code> is an executable spec of
+        the FSM, and it is what the host protocol is actually tested against.
+      </figcaption>
+    </figure>
+
+    <p>Five cocotb tests run against both RTL and, once a netlist exists, gates:</p>
+    <ul>
+      <li>Reset state, including that <code>uio_oe</code> leaves the two handshake pins as inputs</li>
+      <li>The three-byte bias path and <code>clamp(acc &gt;&gt; s, 0, 15)</code>, including saturation at both ends</li>
+      <li>A hand-computed MAC and argmax, small enough to check on paper</li>
+      <li>Real MNIST images end to end — every hidden activation and the predicted class compared against the golden model</li>
+      <li>A stalled stream, proving idle cycles are inert</li>
+    </ul>
+    <p>
+      All five pass for HIDDEN = 8, 16 and 32, for the ternary datapath, and for both
+      area trims. The RTL lints clean under <code>verilator -Wall</code> across every
+      one of those parameter combinations.
+    </p>
+  </section>
+
+  <!-- 11 -->
+  <section id="tapeout">
+    <span class="secno">11 — Tape-out</span>
+    <h2>Dropping this into ttihp-verilog-template</h2>
+    <ol class="body">
+      <li>Copy <code>tt_um_mnist_nn.sv</code> into <code>src/</code>, delete the template's <code>project.v</code>, and point <code>source_files:</code> at the SystemVerilog file.</li>
+      <li>Copy <code>info.yaml</code>, <code>docs/info.md</code> and <code>test/</code> over the template's, and fill in author and Discord handle.</li>
+      <li>Add <code>numpy</code> to <code>test/requirements.txt</code> — the testbench imports the golden model.</li>
+      <li>The template's <code>test.yaml</code> and <code>gds.yaml</code> workflows then run unmodified; <code>tiles: "1x1"</code> is already set.</li>
+    </ol>
+    <p>
+      The <code>train/</code> and <code>artifacts/</code> directories are not consumed
+      by the GDS flow. Keep them for reproducibility or strip them; neither affects
+      the hardened result.
+    </p>
+
+    <div class="note">
+      <h4>Before you submit</h4>
+      <p>
+        Run <code>./area_check.sh</code> after any RTL change — it re-synthesises
+        against the real liberty and prints utilisation, which is the number that
+        decides whether the design fits. Then run the cocotb suite for the exact
+        parameter set you are hardening, not just the default. Every configuration in
+        the results table has been through both.
+      </p>
+    </div>
+
+    <hr class="soft">
+    <p style="color:var(--ink-2); font-size:14.5px">
+      Open questions worth a second silicon run: 5-bit activations instead of more
+      neurons; a wider host port to break the one-MAC-per-clock ceiling; and folding
+      the bias into the first few streamed MACs to delete the bias path entirely.
+    </p>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <code>tt_um_mnist_nn</code> · IHP sg13g2 · 1×1 tile · areas from Yosys against
+    <code>sg13g2_stdcell_typ_1p20V_25C.lib</code> · accuracy on the full MNIST and CIFAR-10 test
+    sets · benchmarks single-threaded on Apple silicon, PyTorch 2.13 ·
+    CIFAR figures reproduce with <code>train/experiments/cifar_dense.py</code>.
+  </div>
+</footer>
+
+<script>
+const CONFIGS = [
+  {id:'h8',  tab:'HIDDEN 8',    acc:'92.15 %', cells:829,  flops:104, area:12430, util:39.7, us:129, ips:'7 757', note:'Smallest build that still classifies usefully.'},
+  {id:'h16', tab:'HIDDEN 16',   acc:'95.47 %', cells:998,  flops:138, area:15688, util:50.1, us:257, ips:'3 895', note:'Shipping configuration.'},
+  {id:'trim',tab:'16, trimmed', acc:'95.47 %', cells:843,  flops:126, area:13622, util:43.5, us:257, ips:'3 895', note:'ACC_W = 16 and SHIFT_FIXED = 6. Same accuracy, less flexibility.'},
+  {id:'h32', tab:'HIDDEN 32',   acc:'97.13 %', cells:1246, flops:204, area:21246, util:67.8, us:512, ips:'1 951', note:'Needs placement density pushed past the 60 % default.'},
+  {id:'t16', tab:'Ternary 16',  acc:'92.76 %', cells:1005, flops:138, area:15197, util:48.5, us:257, ips:'3 895', note:'Weights restricted to −1, 0, +1. Saves 3.1 % area, costs 2.7 points.'}
+];
+
+const ROWS = 41, ROW_H = 3.78, TILE_W = 202.08, TILE_H = 154.98;
+
+// Deterministic PRNG so the placement pattern is stable across renders.
+function rng(seed){ let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
+
+function drawTile(util){
+  const r = rng(20260901);
+  let cells = '';
+  for (let i = 0; i < ROWS; i++){
+    const y = i * ROW_H + 0.55;
+    const h = ROW_H - 1.1;
+    let x = 0.8, placed = 0;
+    const target = (TILE_W - 1.6) * (util / 100);
+    let guard = 0;
+    while (placed < target && guard++ < 200){
+      const w = Math.min(1.8 + r() * 7.5, target - placed);
+      if (w < 0.4) break;
+      cells += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" rx="0.3" class="cellrect"/>`;
+      placed += w;
+      x += w + (r() < 0.3 ? 0.35 + r() * 1.4 : 0.28);
+      if (x > TILE_W - 2) break;
+    }
+  }
+  let guides = '';
+  for (let i = 0; i <= ROWS; i++){
+    guides += `<line x1="0" y1="${(i*ROW_H).toFixed(2)}" x2="${TILE_W}" y2="${(i*ROW_H).toFixed(2)}" class="rowline"/>`;
+  }
+  return `<rect class="tileframe" x="0.3" y="0.3" width="${TILE_W-0.6}" height="${TILE_H-0.6}"/>
+    ${guides}${cells}`;
+}
+
+function statusOf(u){
+  if (u < 55) return ['ok','Fits at default density'];
+  if (u < 65) return ['watch','Tight — raise density'];
+  return ['over','Over the 60 % default'];
+}
+
+const tabs = document.querySelector('.tabs');
+const svg  = document.getElementById('tile');
+
+function select(id){
+  const c = CONFIGS.find(x => x.id === id);
+  [...tabs.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
+  svg.innerHTML = drawTile(c.util);
+  svg.setAttribute('aria-label',
+    `The 1 by 1 tile drawn to scale, 41 standard-cell rows, filled to ${c.util} per cent utilisation for the ${c.tab} configuration.`);
+  document.getElementById('s-util').innerHTML  = c.util.toFixed(1) + '<small> %</small>';
+  document.getElementById('s-area').innerHTML  = c.area.toLocaleString('en-US').replace(/,/g,' ') + '<small> µm²</small>';
+  document.getElementById('s-acc').textContent = c.acc;
+  document.getElementById('s-cells').innerHTML = c.cells + ' <small>/ ' + c.flops + '</small>';
+  document.getElementById('s-lat').innerHTML   = c.us + '<small> µs</small>';
+  document.getElementById('s-ips').innerHTML   = c.ips + '<small> img/s</small>';
+  const [cls, label] = statusOf(c.util);
+  document.getElementById('s-pill').innerHTML  = `<span class="pill ${cls}">${label}</span>`;
+  document.getElementById('s-note').textContent = c.note;
+}
+
+CONFIGS.forEach(c => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.dataset.id = c.id; b.textContent = c.tab;
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => select(c.id));
+  tabs.appendChild(b);
+});
+select('h16');
+
+// Section rail highlighting
+const links = [...document.querySelectorAll('nav.rail a')];
+const byId = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting){
+      links.forEach(a => a.classList.remove('on'));
+      byId.get(e.target.id)?.classList.add('on');
+    }
+  });
+}, {rootMargin: '-10% 0px -70% 0px', threshold: 0});
+document.querySelectorAll('main section').forEach(s => obs.observe(s));
+</script>

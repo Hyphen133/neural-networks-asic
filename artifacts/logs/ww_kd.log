@@ -1,0 +1,29 @@
+targets=['marvin', 'sheila']  clips=18306  feats=(18306, 24, 8)  kd=0.7
+window starts [0, 4, 8]  -> 3 evaluations per clip
+teacher: 10062 base clips, aug x3
+teacher: log-mel CNN, test accuracy 90.38%
+teacher done in 125s
+ep   10  loss 0.5922  val recall @1.0/h marvin=  0.4%  sheila=  0.0%
+ep   20  loss 0.5969  val recall @1.0/h marvin=  0.0%  sheila=  0.3%
+ep   30  loss 0.6175  val recall @1.0/h marvin=  0.1%  sheila=  0.3%
+ep   40  loss 0.6016  val recall @1.0/h marvin=  0.1%  sheila=  0.3%
+ep   50  loss 0.5828  val recall @1.0/h marvin=  0.7%  sheila=  0.5%
+ep   60  loss 0.5823  val recall @1.0/h marvin=  0.0%  sheila=  0.5%
+ep   70  loss 0.5433  val recall @1.0/h marvin=  0.0%  sheila=  0.3%
+ep   80  loss 0.5533  val recall @1.0/h marvin=  0.0%  sheila=  0.0%
+
+=== test set (1747 clips) ===
+  marvin: AUC 70.31%   threshold 36 (chosen on val at 1.0 FA/h)
+      recall @   0.5 FA/h =   0.0%  (thr 39)  [below measurement floor]
+      recall @   1.0 FA/h =   0.0%  (thr 39)  [below measurement floor]
+      recall @   5.0 FA/h =   0.0%  (thr 39)  [below measurement floor]
+      recall @  20.0 FA/h =   0.0%  (thr 38)
+  sheila: AUC 80.58%   threshold 80 (chosen on val at 1.0 FA/h)
+      recall @   0.5 FA/h =   0.3%  (thr 77)  [below measurement floor]
+      recall @   1.0 FA/h =   0.3%  (thr 77)  [below measurement floor]
+      recall @   5.0 FA/h =   0.3%  (thr 77)  [below measurement floor]
+      recall @  20.0 FA/h =   0.3%  (thr 76)
+  detector evaluates 21458 windows/hour (one every 168 ms)
+
+weights: 150/256 non-zero (59%), 72 positive / 78 negative
+wrote artifacts/ww_model_marvin_sheila_kd0.7.npz

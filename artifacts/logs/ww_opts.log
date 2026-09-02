@@ -1,0 +1,29 @@
+A. weight precision on the LINEAR template (constants -> 0 extra flops)
+  linear, ternary  {-1,0,1}                            marvin  65.7%  sheila  85.1%   shift=None  sparsity  66%  acc-regs=8
+  linear, int3  {-3..3}                                marvin  66.7%  sheila  84.9%   shift=None  sparsity  65%  acc-regs=8
+  linear, int4  {-7..7}                                marvin  66.7%  sheila  84.9%   shift=None  sparsity  65%  acc-regs=8
+  linear, int5 {-15..15}                               marvin  66.7%  sheila  84.9%   shift=None  sparsity  65%  acc-regs=8
+
+B. one shared hidden layer, ternary weights
+  2-layer H=4, ternary                                 marvin   0.0%  sheila   2.1%   shift=3  sparsity  59%  acc-regs=16
+  2-layer H=6, ternary                                 marvin   1.0%  sheila   2.6%   shift=3  sparsity  62%  acc-regs=24
+  2-layer H=8, ternary                                 marvin   0.0%  sheila   0.0%   shift=3  sparsity  59%  acc-regs=32
+
+C. one shared hidden layer, wider constant weights
+  2-layer H=4, int3                                    marvin   0.0%  sheila   0.0%   shift=3  sparsity  60%  acc-regs=16
+  2-layer H=4, int4                                    marvin   0.0%  sheila   0.0%   shift=3  sparsity  60%  acc-regs=16
+  2-layer H=8, int3                                    marvin   0.0%  sheila   0.0%   shift=3  sparsity  59%  acc-regs=32
+  2-layer H=8, int4                                    marvin   0.0%  sheila   0.0%   shift=3  sparsity  59%  acc-regs=32
+
+D. hidden activation width (costs accumulator bits, not weights)
+  2-layer H=8 int3, hidden 2b                          marvin   0.0%  sheila   0.0%   shift=6  sparsity  58%  acc-regs=32
+  2-layer H=8 int3, hidden 3b                          marvin   0.0%  sheila   0.0%   shift=5  sparsity  58%  acc-regs=32
+  2-layer H=8 int3, hidden 4b                          marvin   0.0%  sheila   0.0%   shift=3  sparsity  59%  acc-regs=32
+  2-layer H=8 int3, hidden 5b                          marvin   0.0%  sheila   0.0%   shift=2  sparsity  58%  acc-regs=32
+
+E. window/hop -- fewer phases means fewer accumulators
+  2-layer H=8 int3, 16 frames hop 4 (4 phases)         marvin   0.0%  sheila   0.0%   shift=3  sparsity  59%  acc-regs=32
+  2-layer H=8 int3, 16 frames hop 8 (2 phases)         marvin   0.0%  sheila   0.2%   shift=3  sparsity  58%  acc-regs=16
+  2-layer H=8 int3, 20 frames hop 5 (4 phases)         marvin  62.0%  sheila  72.4%   shift=4  sparsity  63%  acc-regs=32
+  2-layer H=8 int3, 24 frames hop 8 (3 phases)         marvin   0.0%  sheila   0.0%   shift=4  sparsity  60%  acc-regs=24
+  2-layer H=8 int3, 12 frames hop 4 (3 phases)         marvin   1.0%  sheila   3.3%   shift=4  sparsity  61%  acc-regs=24

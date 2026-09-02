@@ -1,0 +1,50 @@
+# Makefile for the tt_um_kws cocotb testbench.
+#
+#   make -f Makefile.kws                 # RTL, fast frames (FRAME_LOG2=6)
+#   FRAME_LOG2=12 make -f Makefile.kws   # the tapeout frame rate (slow: few
+#                                        # frames complete in a short sim)
+#   NBANK=7 NSLOT=4 make -f Makefile.kws # a wider build
+#   GATES=yes make -f Makefile.kws       # gate-level
+#
+# Every parameter below is passed to BOTH the RTL and test_kws.py, which reads
+# the same environment variables to build its golden model -- so the two cannot
+# be configured differently by accident.
+
+SIM ?= icarus
+TOPLEVEL_LANG ?= verilog
+SRC_DIR = $(PWD)/../src
+PROJECT_SOURCES = tt_um_kws.sv
+
+# Small frames by default: the classifier then runs many times per simulated
+# millisecond, so a short stimulus still covers the interesting logic.
+FRAME_LOG2 ?= 6
+export FRAME_LOG2
+
+ifneq ($(GATES),yes)
+
+SIM_BUILD        = sim_build/kws_rtl
+VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+COMPILE_ARGS    += -g2012 -I$(SRC_DIR)
+
+# -D, not -P: Icarus 13.0 ignores -P unless -s is given and rejects it when it
+# is, so overrides go through tb_kws.v's `P_*` macros instead.
+PARAMS = NBANK STATE_W IN_SHIFT ENV_W ENV_SHIFT DECAY FEAT_W NSLOT \
+         FRAME_LOG2 HOLD_FRAMES
+$(foreach p,$(PARAMS),$(if $($(p)),$(eval COMPILE_ARGS += -DP_$(p)=$($(p)))))
+$(foreach p,$(PARAMS),$(if $($(p)),$(eval export $(p))))
+
+else
+
+SIM_BUILD        = sim_build/kws_gl
+COMPILE_ARGS    += -DGL_TEST -DFUNCTIONAL -DUSE_POWER_PINS -DUNIT_DELAY=\#1 -g2012
+VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13g2/libs.ref/sg13g2_stdcell/verilog/sg13g2_stdcell.v
+VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
+
+endif
+
+VERILOG_SOURCES += $(PWD)/tb_kws.v
+
+TOPLEVEL = tb
+MODULE   = test_kws
+
+include $(shell cocotb-config --makefiles)/Makefile.sim

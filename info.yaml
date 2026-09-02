@@ -1,0 +1,50 @@
+# Tiny Tapeout project information
+project:
+  title:        "Streaming MNIST Neural Network"
+  author:       "Jedrzej Hasiura"
+  discord:      ""
+  description:  "W4A4 784-16-10 MNIST classifier: 4-bit MAC, weights streamed from the host, on-chip argmax"
+  language:     "SystemVerilog"
+  clock_hz:     50000000
+
+  # A 1x1 IHP tile is ~202.08 x 154.98 um. Synthesised cell area for the
+  # default HIDDEN=16 configuration is ~15.7k um^2, i.e. ~50% tile utilisation
+  # against OpenLane's 60% default placement density. See area_check.sh.
+  tiles: "1x1"
+
+  top_module:  "tt_um_mnist_nn"
+
+  source_files:
+    - "tt_um_mnist_nn.sv"
+
+# The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
+pinout:
+  ui[0]: "data[0] - command/data byte"
+  ui[1]: "data[1]"
+  ui[2]: "data[2]"
+  ui[3]: "data[3] - layer weight nibble MSB (sign)"
+  ui[4]: "data[4] - pixel nibble LSB"
+  ui[5]: "data[5]"
+  ui[6]: "data[6]"
+  ui[7]: "data[7] - pixel nibble MSB"
+
+  uo[0]: "class[0] (or hidden[] readback when debug is enabled)"
+  uo[1]: "class[1]"
+  uo[2]: "class[2]"
+  uo[3]: "class[3]"
+  uo[4]: "result_valid"
+  uo[5]: "in_layer2"
+  uo[6]: "acc_overflow (sticky)"
+  uo[7]: "ack - registered in_valid"
+
+  uio[0]: "in_valid (input)"
+  uio[1]: "is_cmd (input)"
+  uio[2]: "debug: hidden index[0]"
+  uio[3]: "debug: hidden index[1]"
+  uio[4]: "debug: hidden index[2]"
+  uio[5]: "debug: hidden index[3]"
+  uio[6]: "debug: state[0]"
+  uio[7]: "debug: state[1]"
+
+# Do not change!
+yaml_version: 6

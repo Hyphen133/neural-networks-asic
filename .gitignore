@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+
+# Datasets (downloadable — see README)
+artifacts/data/
+train/data/
+*.tar.gz
+
+# Simulation outputs
+sim_build/
+results.xml
+*.vcd
+
+# Vendored PDK liberty file
+artifacts/sg13g2.lib
