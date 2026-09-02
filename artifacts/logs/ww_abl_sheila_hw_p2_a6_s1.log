@@ -1,0 +1,20 @@
+tag=sheila_hw  (13188, 24, 5)  bands=5  window=16 frames (671 ms)  phases=2  hop=8
+FEAT_OFF=6 subtracted in hardware; hidden bias range +-31
+train 10658 / val 1258 / test 1272   positives 8088
+  [mlp] ep   25  loss 0.2489  val AUC  78.2%
+  [mlp] ep   50  loss 0.2489  val AUC  78.8%
+  [mlp] ep   75  loss 0.2267  val AUC  79.3%
+  [mlp] ep  100  loss 0.2698  val AUC  78.5%
+  [mlp] ep  125  loss 0.3223  val AUC  87.0%
+  [mlp] ep  150  loss 0.2103  val AUC  82.8%
+  [mlp] ep  175  loss 0.2752  val AUC  85.9%
+  [mlp] ep  200  loss 0.3105  val AUC  85.4%
+  [mlp] ep  225  loss 0.3045  val AUC  85.0%
+  [mlp] ep  250  loss 0.2453  val AUC  87.6%
+  [mlp] TEST AUC 89.63%   (10729 windows/hour)
+        recall @   0.5 FA/h =   9.9% (thr 15)  [below measurement floor]
+        recall @   1.0 FA/h =   9.9% (thr 15)  [below measurement floor]
+        recall @   5.0 FA/h =   9.9% (thr 15)  [below measurement floor]
+        recall @  20.0 FA/h =   9.9% (thr 15)  [below measurement floor]
+
+best: mlp  AUC 89.63%

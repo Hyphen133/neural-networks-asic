@@ -1,0 +1,30 @@
+targets=['sheila']  clips=13188  positives=8088  negatives=5100
+PDM 1.5625 MHz  (clk 50.0 MHz / 32)
+frame 16 bits = 41.9 ms, 16 frames = 671 ms window
+9 cascade stages, K=2, state 9 b
+bands (stage: passband):
+  band 0  stage  4     3885.6 ..   7771.2 Hz
+  band 1  stage  5     1942.8 ..   3885.6 Hz
+  band 2  stage  6      971.4 ..   1942.8 Hz
+  band 3  stage  7      485.7 ..    971.4 Hz
+  band 4  stage  8      242.9 ..    485.7 Hz
+extracting 24 frames/clip in batches of 1024
+  1024/13188      19s elapsed  eta    230s
+  2048/13188      39s elapsed  eta    211s
+  3072/13188      58s elapsed  eta    192s
+  4096/13188      78s elapsed  eta    173s
+  5120/13188      97s elapsed  eta    153s
+  6144/13188     117s elapsed  eta    134s
+  7168/13188     136s elapsed  eta    115s
+  8192/13188     156s elapsed  eta     95s
+  9216/13188     176s elapsed  eta     76s
+  10240/13188     195s elapsed  eta     56s
+  11264/13188     215s elapsed  eta     37s
+  12288/13188     234s elapsed  eta     17s
+  13188/13188     253s elapsed  eta      0s
+
+wrote artifacts/ww_feats_sheila_s9.npz  1.6 MB uncompressed
+feature range 0..8  mean 3.46
+  train  10658  positives 6552
+  val     1258  positives 768
+  test    1272  positives 768

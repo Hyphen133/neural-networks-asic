@@ -30,6 +30,9 @@ run() {
   awk -v n="$name" -v c="$c" -v a="$a" -v f="$f" -v t=$TILE \
     'BEGIN{printf "%-40s %7d %7d %10.0f %8.1f%%\n",n,c,f,a,100*a/t}'
 }
-run "shipped (H=4, 7b acc, 2 phase, 5 band)" ""
-run "fallback: STATE_W=9"                    "-set STATE_W 9"
-run "stretch: H=8, 8b acc (needs 2x1)"       "-set NHID 8 -set HACC_W 8"
+# The LibreLane flow adds ~5k um^2 on top of this figure (fanout and hold
+# buffers, clock tree), so keep the synthesised area under ~65 % of the tile.
+run "shipped (H=4, 6b acc, 2 phases, state 10b)" ""
+run "previous tape-out candidate: 7b acc"        "-set HACC_W 7"
+run "smaller: 1 phase (AUC 86 %)"                "-set NPHASE 1"
+run "stretch: H=8, 8b acc (needs 2x1)"           "-set NHID 8 -set HACC_W 8"

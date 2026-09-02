@@ -22,7 +22,7 @@ import wwhw  # noqa: E402
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 FRAME_LOG2 = int(os.environ.get("FRAME_LOG2", "8"))
-NHID, HACC_W, HSHIFT, FEAT_OFF = 4, 7, 1, 6
+NHID, HACC_W, HSHIFT, FEAT_OFF = 4, 6, 1, 6
 NPHASE = 2
 NFRAMES_RUN = int(os.environ.get("NFRAMES", "40"))
 
