@@ -13,11 +13,16 @@ FRAME_LOG2 ?= 8
 
 ifneq ($(GATES),yes)
 
-# RTL simulation:
-SIM_BUILD        = sim_build/rtl
+# RTL simulation. The build directory carries the frame length and the weight
+# set: cocotb only recompiles when a *source* changes, so a shared directory
+# would silently reuse a FRAME_LOG2=8 build for a FRAME_LOG2=16 run.
+SIM_BUILD        = sim_build/rtl_f$(FRAME_LOG2)$(if $(filter drone,$(WEIGHTS)),_drone,)
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
 COMPILE_ARGS    += -g2012
 COMPILE_ARGS    += -DWW_FRAME_LOG2=$(FRAME_LOG2)
+ifeq ($(WEIGHTS),drone)
+COMPILE_ARGS    += -DWW_WEIGHTS_DRONE
+endif
 
 else
 
@@ -53,4 +58,5 @@ COCOTB_TEST_MODULES = test
 MODULE = test
 
 export FRAME_LOG2
+export WEIGHTS
 include $(shell cocotb-config --makefiles)/Makefile.sim

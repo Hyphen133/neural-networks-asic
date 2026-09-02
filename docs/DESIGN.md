@@ -604,6 +604,7 @@ src/config.json          LibreLane config (template + PL_TARGET_DENSITY_PCT 85)
 info.yaml                TinyTapeout metadata and pinout
 docs/info.md             datasheet rendered by TinyTapeout
 docs/DESIGN.md           this document
+docs/DRONE.md            the same RTL retargeted to drone detection (DADS); build with WEIGHTS=drone
 test/                    cocotb testbench, Makefile (RTL and GL), tb.v
 train/wwhw.py            bit-exact Python twin
 train/wwdata.py          Speech Commands loader, official split

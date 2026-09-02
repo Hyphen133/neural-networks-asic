@@ -11,12 +11,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 YOSYS=${YOSYS:-yosys}
 LIB=${LIB:-artifacts/sg13g2.lib}
+DEFINES=${DEFINES:-}   # e.g. DEFINES=-DWW_WEIGHTS_DRONE for the drone weights
 TILE=31318
 printf "%-40s %7s %7s %10s %9s\n" "config" "cells" "flops" "area/um2" "tile-util"
 run() {
   local name=$1; shift
   local out
-  out=$($YOSYS -p "read_verilog -sv -I src src/tt_um_wakeword.sv
+  out=$($YOSYS -p "read_verilog -sv ${DEFINES:-} -I src src/tt_um_wakeword.sv
     chparam $* tt_um_wakeword
     synth -top tt_um_wakeword -flatten
     dfflibmap -liberty $LIB

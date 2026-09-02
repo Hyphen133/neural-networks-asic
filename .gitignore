@@ -28,3 +28,6 @@ src/config_merged.json
 test/gate_level_netlist.v
 src/config_*.json
 !src/config.json
+
+# Training / harden logs
+artifacts/logs/

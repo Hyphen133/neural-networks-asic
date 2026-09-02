@@ -480,3 +480,14 @@ python train/train_sheila.py --tag sheila_hw --arch mlp --H 4 --WL 1 --shift 1 \
 ./harden_local.sh                                             # LibreLane in Docker
 cd test && make && FRAME_LOG2=16 make && GATES=yes make       # RTL, full rate, GL
 ```
+
+## 8. Second target on the same silicon: drone detection (DADS)
+
+Recorded in full in `docs/DRONE.md`. Summary: same RTL and parameters,
+constants retrained on DADS with a recording-disjoint block split; H=4
+ternary, 6-bit accumulator reaches 93.3–95.3 % test AUC over 14 seeds
+(val-selected seed: 95.3 %) against an fp32 ceiling of 98.2 %; distillation
+and requantiser shift changes buy nothing; the residual error is level
+confusion (within-level AUC 96–99 %). Hardens to 94.6 % core utilisation,
+0 DRC/LVS, timing met (`runs/drone`). Selected with `-DWW_WEIGHTS_DRONE`.
+

@@ -144,24 +144,34 @@ class RQ(torch.autograd.Function):
 BIAS_LIM = 0   # set in main(): the reset value is a real register
 
 
+@torch.no_grad()
+def score_all(fwd, Xw, args, chunk=16384):
+    """Max-over-windows score for every clip, evaluated in chunks."""
+    out = [fwd(Xw[i:i + chunk], args.shift, args.accw).max(1).values[:, 0]
+           for i in range(0, len(Xw), chunk)]
+    return torch.cat(out).cpu().numpy()
+
+
 def build(arch, H, NF, NB, WL, Xw, idx):
     """Returns (params, forward, clampers, init_info)."""
     if arch == "linear":
-        w = nn.Parameter(torch.empty(1, NF, NB).uniform_(-1.2, 1.2))
-        b = nn.Parameter(torch.zeros(1))
+        w = nn.Parameter(torch.empty(1, NF, NB, device=Xw.device).uniform_(-1.2, 1.2))
+        b = nn.Parameter(torch.zeros(1, device=Xw.device))
         def fwd(x, shift=None, accw=0):
             return torch.einsum('nwfb,kfb->nwk', x, QW.apply(w, WL)) + b
         return [{'params': [w], 'lr': 0.05}, {'params': [b], 'lr': 0.05}], fwd, [w], (w,)
 
-    w1 = nn.Parameter(torch.empty(H, NF, NB).uniform_(-1.2, 1.2))
+    dev = Xw.device
+    w1 = nn.Parameter(torch.empty(H, NF, NB, device=dev).uniform_(-1.2, 1.2))
     with torch.no_grad():
         a0 = torch.einsum('nwfb,hfb->nwh', Xw[idx[:4096]], QW.apply(w1, WL))
         b1v = -a0.reshape(-1, H).median(0).values
         if BIAS_LIM:
             b1v = b1v.clamp(-BIAS_LIM - 1, BIAS_LIM)
     b1 = nn.Parameter(b1v.clone())
-    w2 = nn.Parameter(torch.tensor([[1.0 if h % 2 == 0 else -1.0 for h in range(H)]]))
-    b = nn.Parameter(torch.zeros(1))
+    w2 = nn.Parameter(torch.tensor([[1.0 if h % 2 == 0 else -1.0 for h in range(H)]],
+                                   device=dev))
+    b = nn.Parameter(torch.zeros(1, device=dev))
 
     def fwd(x, shift, accw=0):
         q1 = QW.apply(w1, WL)
@@ -201,6 +211,16 @@ def main():
     ap.add_argument("--fa", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--emit", action="store_true")
+    ap.add_argument("--name", default="sheila",
+                    help="label written into the header comment (e.g. drone)")
+    ap.add_argument("--out", default=os.path.join(SRC, "ww_weights.svh"),
+                    help="header path; the drone build uses src/ww_weights_drone.svh")
+    ap.add_argument("--device", default="cpu", help="cpu or cuda")
+    ap.add_argument("--batch", type=int, default=1024)
+    ap.add_argument("--kd", default="", help="teacher npz (ceiling_probe.py --save-teacher)")
+    ap.add_argument("--kd-alpha", type=float, default=0.5,
+                    help="weight of the teacher's probability in the soft target")
+    ap.add_argument("--kd-temp", type=float, default=2.0, help="teacher logit temperature")
     args = ap.parse_args()
 
     d = np.load(os.path.join(ART, f"ww_feats_{args.tag}.npz"), allow_pickle=True)
@@ -225,8 +245,18 @@ def main():
     # value. That keeps both the accumulator and the reset bias small.
     CENTRE = int(round(feats[splits == 0].mean()))
     X = feats.astype(np.float32) - CENTRE
-    Xw = torch.from_numpy(np.stack([X[:, s:s + NF] for s in starts], 1))
-    Y = torch.from_numpy((labels > 0).astype(np.float32))[:, None]
+    dev = torch.device(args.device)
+    Xw = torch.from_numpy(np.stack([X[:, s:s + NF] for s in starts], 1)).to(dev)
+    Y = torch.from_numpy((labels > 0).astype(np.float32))[:, None].to(dev)
+    if args.kd:
+        # Soft targets: the fp32 ceiling model's probability, blended with the
+        # label. Same idea as train_ww.py's distillation, one line of loss.
+        tl = torch.from_numpy(np.load(args.kd)["logits"]).to(dev)[:, None]
+        if tl.shape[0] != Xw.shape[0]:
+            sys.exit(f"teacher {args.kd} has {tl.shape[0]} clips, features have "
+                     f"{Xw.shape[0]}: re-run ceiling_probe.py --save-teacher")
+        Y = (1 - args.kd_alpha) * Y + args.kd_alpha * torch.sigmoid(tl / args.kd_temp)
+        print(f"distilling from {args.kd}  alpha={args.kd_alpha}  T={args.kd_temp}")
     tr, va, te = splits == 0, splits == 1, splits == 2
     idx = np.where(tr)[0]
     print(f"tag={args.tag}  {feats.shape}  bands={NB}  window={NF} frames "
@@ -240,14 +270,15 @@ def main():
     for arch in archs:
         torch.manual_seed(args.seed); np.random.seed(args.seed)
         groups, fwd, clampers, tensors = build(arch, args.H, NF, NB, args.WL, Xw, idx)
-        lt = nn.Parameter(torch.tensor(2.0)); groups.append({'params': [lt], 'lr': 0.01})
+        lt = nn.Parameter(torch.tensor(2.0, device=dev)); groups.append({'params': [lt], 'lr': 0.01})
         opt = torch.optim.Adam(groups)
         sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs)
         nwarm = int(args.warmup * args.epochs)
         best = (-1, None)
         for ep in range(args.epochs):
-            for i in range(0, len(idx), 1024):
-                j = np.random.permutation(idx)[i:i + 1024] if i == 0 else idx[i:i + 1024]
+            perm = np.random.permutation(idx)
+            for i in range(0, len(idx), args.batch):
+                j = perm[i:i + args.batch]
                 s = fwd(Xw[j], args.shift, args.accw)
                 pooled = (s.mean(1) if ep < nwarm
                           else s.logsumexp(1) - np.log(s.shape[1]))
@@ -260,8 +291,7 @@ def main():
                         tensors[1].clamp_(-BIAS_LIM - 1, BIAS_LIM)
             sch.step()
             if (ep + 1) % 25 == 0 or ep == args.epochs - 1:
-                with torch.no_grad():
-                    sv = fwd(Xw, args.shift, args.accw).max(1).values[:, 0].numpy()
+                sv = score_all(fwd, Xw, args)
                 a = auc(sv[va], (labels > 0)[va])
                 if a > best[0]:
                     best = (a, [t.detach().clone() for t in tensors])
@@ -269,7 +299,7 @@ def main():
         with torch.no_grad():
             for t, bv in zip(tensors, best[1]):
                 t.copy_(bv)
-            sv = fwd(Xw, args.shift, args.accw).max(1).values[:, 0].numpy()
+        sv = score_all(fwd, Xw, args)
         ate = auc(sv[te], (labels > 0)[te])
         ops, eph = operating_points(sv[te], (labels > 0)[te], hop, cfg.frame_ms)
         vops, _ = operating_points(sv[va], (labels > 0)[va], hop, cfg.frame_ms, (args.fa,))
@@ -287,10 +317,10 @@ def main():
     if args.emit:
         assert pick == "mlp", "emit expects the mlp head"
         t = results["mlp"]["tensors"]
-        W1 = QW.apply(t[0], args.WL).numpy().astype(np.int64)
-        b1 = t[1].numpy()
-        W2 = QW.apply(t[2], args.WL).numpy().astype(np.int64).reshape(-1)
-        bo = float(t[3].numpy().reshape(-1)[0])
+        W1 = QW.apply(t[0], args.WL).cpu().numpy().astype(np.int64)
+        b1 = t[1].cpu().numpy()
+        W2 = QW.apply(t[2], args.WL).cpu().numpy().astype(np.int64).reshape(-1)
+        bo = float(t[3].cpu().numpy().reshape(-1)[0])
         # Centring folds into the per-unit reset value; the output bias folds
         # into the threshold. Both are exact, not approximations.
         HB = np.round(b1).astype(np.int64)
@@ -298,15 +328,15 @@ def main():
             assert HB.min() >= -BIAS_LIM - 1 and HB.max() <= BIAS_LIM, (
                 f'hidden bias {HB} outside the accumulator range')
         thr = int(np.floor(results["mlp"]["thr"] - bo))
-        emit_weights(W1, HB, W2, thr, args.accw or 8, 10,
-                     os.path.join(SRC, "ww_weights.svh"),
-                     f"sheila, H={args.H} ternary, AUC {results['mlp']['auc']*100:.1f}%, "
+        emit_weights(W1, HB, W2, thr, args.accw or 8, 10, args.out,
+                     f"{args.name}, H={args.H} ternary, AUC {results['mlp']['auc']*100:.1f}%, "
                      f"nphase={nphase} shift={args.shift} centre={CENTRE}")
-        print(f"wrote {os.path.relpath(os.path.join(SRC,'ww_weights.svh'))}  "
+        print(f"wrote {os.path.relpath(args.out)}  "
               f"HBIAS={HB.tolist()}  W2={W2.tolist()}  thr={thr}")
 
-    np.savez(os.path.join(ART, f"ww_sheila_{args.arch}_{args.tag}.npz"),
-             **{f"t{i}": t.numpy() for i, t in enumerate(results[pick]["tensors"])},
+    sfx = f"_s{args.seed}" if args.seed else ""
+    np.savez(os.path.join(ART, f"ww_{args.name}_{args.arch}_{args.tag}{sfx}.npz"),
+             **{f"t{i}": t.cpu().numpy() for i, t in enumerate(results[pick]["tensors"])},
              auc=results[pick]["auc"], centre=CENTRE, cfg=json.dumps(cfg.to_dict()))
 
 

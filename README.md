@@ -35,6 +35,7 @@ what is and is not established.
 ```
 src/tt_um_wakeword.sv   the design (parameterised; defaults are what tapes out)
 src/ww_weights.svh      generated weights: hidden templates, biases, output layer, threshold
+src/ww_weights_drone.svh  alternative constants: DADS drone detector, selected with -DWW_WEIGHTS_DRONE (docs/DRONE.md)
 src/config.json         LibreLane config from the ttihp template (PL_TARGET_DENSITY_PCT 85)
 info.yaml               TinyTapeout project metadata and pinout
 docs/info.md            datasheet: how it works, how to test, external hardware
@@ -45,11 +46,22 @@ train/wwdata.py         Speech Commands loader, official speaker-disjoint split
 train/extract.py        run the front end over the dataset, cache features
 train/train_sheila.py   quantisation-aware training, emits ww_weights.svh
 train/extract_all.py, sweep_words.py   35-word keyword sweep (FINDINGS.md §6)
+train/dadsdata.py, extract_dads.py, eval_header.py, ceiling_probe.py   drone detector pipeline (docs/DRONE.md)
 area_check.sh           yosys cell-area estimate against the sg13g2 liberty
 harden_local.sh         the TinyTapeout LibreLane flow, locally, in Docker
 FINDINGS.md             the measurement trail, including why the first version did not fit
 TAPEOUT_PLAN.md         the decisions behind this repository's shape
 ```
+
+## Same silicon, second target: drone detection
+
+The RTL is a fixed front end plus a hard-wired template, so retargeting it is
+a matter of new constants. `src/ww_weights_drone.svh` holds a drone / no-drone
+detector trained on DADS (114 k clips): **95.3 % test AUC** (fp32 ceiling
+98.2 %), hardens to 94.6 % core utilisation with 0 DRC on the same 1×1 tile.
+Build it with `WEIGHTS=drone` (`test/`, `harden_local.sh`) or
+`DEFINES=-DWW_WEIGHTS_DRONE ./area_check.sh`; the default build is still
+sheila. Data, split, results and limits: [docs/DRONE.md](docs/DRONE.md).
 
 ## Quick start
 

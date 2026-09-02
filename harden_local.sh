@@ -17,6 +17,11 @@ TT_TOOLS=${TT_TOOLS:-$HOME/tt-support-tools}
 PDK_ROOT=${PDK_ROOT:-$HOME/.ciel}
 TAG=${TAG:-wokwi}
 EXTRA=${EXTRA:-}
+WEIGHTS=${WEIGHTS:-sheila}   # WEIGHTS=drone builds the DADS drone detector
+if [ "$WEIGHTS" = drone ]; then
+  EXTRA="\"VERILOG_DEFINES\": [\"WW_WEIGHTS_DRONE\"]${EXTRA:+,
+  $EXTRA}"
+fi
 
 [ -d "$TT_TOOLS/tech/ihp-sg13g2" ] || {
   echo "TT_TOOLS=$TT_TOOLS does not look like tt-support-tools" >&2; exit 1; }

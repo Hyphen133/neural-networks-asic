@@ -62,7 +62,14 @@ module tt_um_wakeword #(
     input  wire       rst_n
 );
 
+  // Weight header. The default is the sheila spotter that tapes out; a build
+  // with -DWW_WEIGHTS_DRONE swaps in the DADS drone detector (same RTL, same
+  // parameters, different constants). Nothing else changes.
+`ifdef WW_WEIGHTS_DRONE
+  `include "ww_weights_drone.svh"
+`else
   `include "ww_weights.svh"
+`endif
 
   localparam IN_AMP   = 1 << (STATE_W - 3);
   localparam FEAT_MAX = (1 << FEAT_W) - 1;

@@ -44,7 +44,9 @@ def test_cfg():
 # ---------------------------------------------------------------------------
 def load_weights():
     """Parse the generated header so RTL and model share one source of truth."""
-    txt = open(os.path.join(SRC, "ww_weights.svh")).read()
+    hdr = "ww_weights_drone.svh" if os.environ.get("WEIGHTS") == "drone" else "ww_weights.svh"
+    with open(os.path.join(SRC, hdr)) as f:
+        txt = f.read()
     def const(name):
         m = re.search(name + r"\s*=\s*(\d+)'h([0-9a-fA-F]+)", txt)
         return int(m.group(2), 16), int(m.group(1))
