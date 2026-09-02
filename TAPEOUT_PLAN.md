@@ -7,8 +7,8 @@ Decisions taken 2026-09-02. Each one closes a branch; none are open.
 | # | question | decision |
 |---|---|---|
 | 1 | tile budget | 1×1 IHP, hard constraint |
-| 2 | model acceptance | none beyond AUC; ship current `ww_weights.svh` (H=4 ternary, 7-bit acc, AUC 89.3 %). Recall at a usable FA rate stays unmeasured and FINDINGS.md must keep saying so |
-| 3 | area risk at 78.7 % util | harden as-is; if routing or DRC fails, drop the 16 debug outputs (`uo[4..7]`, `uio[0..7]`) before touching the model |
+| 2 | model acceptance | none beyond AUC. Recall at a usable FA rate stays unmeasured and FINDINGS.md must keep saying so. **Revised after the flow run:** the original weights did not fit (see 3); shipped model is H=4 ternary with a **6-bit** accumulator, retrained, AUC 89.1 % |
+| 3 | area risk at 78.7 % util | harden as-is; fallback was dropping debug pins. **Outcome:** the real flow reached 105.7 % utilisation. Fixed with bit-exact RTL changes (async reset, rotating rings, narrower output sum) plus the 6-bit accumulator. Debug pins saved nothing and stay. Option chosen by the user after measurement: model change over 2×1 tiles. FINDINGS.md §7 has the numbers |
 | 4 | submission location | restructure this repo into the ttihp-verilog-template layout |
 | 5 | MNIST tree | full delete: root `src/ test/ train/ docs/ info.yaml area_check.sh`, `artifacts/weights_*`, `artifacts/kws_fit.json`. Lives on in git history |
 | 6 | pinout | frozen as in `wakeword/info.yaml`. External hardware: one 3.3 V PDM MEMS mic, data → `ui[0]`, clock ← `uo[0]` (1.5625 MHz). Trim switches `ui[7:1]` = `1000000` for nominal |
@@ -39,8 +39,19 @@ Decisions taken 2026-09-02. Each one closes a branch; none are open.
 11. Local one-off: verilator real-clip run per decision 7. Record in FINDINGS.md.
 12. Submit to the open IHP shuttle.
 
+## Status (2026-09-02, end of day)
+
+Steps 1–8 done. Local LibreLane harden (`runs/wokwi6`) is clean: 0 DRC, 0 LVS,
+timing met, 95.9 % core utilisation. cocotb passes at both frame lengths and on
+the gate-level netlist. The gate-level run caught a synthesis-semantics bug
+(`-N'(x)` rectifying the mic input, present since the first version); see
+FINDINGS.md §7. Remaining: push, watch the GitHub `gds` action (it should
+reproduce the local run exactly; its GL test uses TT's patched iverilog), then
+submit.
+
 ## Explicitly not doing
 
-- No FA/hour measurement, no negative-audio corpus, no retrain (decision 2).
-- No `STATE_W=9` shrink; it changes the front end and would require re-extraction and retrain.
-- No H=8; needs 95.6 % util.
+- No FA/hour measurement, no negative-audio corpus (decision 2).
+- No `STATE_W=9`: measured, costs 2 AUC points alone and 7 with the 6-bit accumulator.
+- No `NPHASE=1`: measured at 86 % AUC; it is the fallback if anything ever needs more area.
+- No H=8; needs 2×1 tiles.

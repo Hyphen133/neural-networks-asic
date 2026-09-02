@@ -7,9 +7,10 @@ project:
   language:     "SystemVerilog"
   clock_hz:     50000000
 
-  # ~24.0k um^2 of cells in a 31.3k um^2 tile = 77% utilisation. Above
-  # OpenLane's 60% default, so raise FP_CORE_UTIL; the ttihp template notes
-  # densities up to ~80% have routed. See wakeword/area_check.sh.
+  # 21.4k um^2 of synthesised cells; 27.7k um^2 (96% of the core) after the
+  # flow adds fanout, clock-tree and hold buffers. Routes clean with
+  # PL_TARGET_DENSITY_PCT 85 in src/config.json. See FINDINGS.md section 7
+  # and ./harden_local.sh.
   tiles: "1x1"
 
   top_module:  "tt_um_wakeword"

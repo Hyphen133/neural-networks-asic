@@ -139,7 +139,12 @@ module tt_um_wakeword #(
   // ---------------------------------------------------------------------
   // Cascade datapath -- one shared subtract-shift-add
   // ---------------------------------------------------------------------
-  wire signed [STATE_W-1:0] x_in = pdm_bit ? STATE_W'(IN_AMP) : -STATE_W'(IN_AMP);
+  // No size casts here on purpose: yosys reads `-STATE_W'(IN_AMP)` as a cast
+  // with a negated width and produces +IN_AMP, i.e. a rectified microphone.
+  // iverilog and the Python model give -IN_AMP. Caught by gate-level sim.
+  localparam signed [STATE_W-1:0] X_POS = IN_AMP;
+  localparam signed [STATE_W-1:0] X_NEG = -IN_AMP;
+  wire signed [STATE_W-1:0] x_in = pdm_bit ? X_POS : X_NEG;
   // The previous stage's output is whatever the last rotation wrote to the
   // ring tail: casc_nx if that stage was due, else its unchanged state. When
   // it was not due, this stage is not due either and casc_in is dead, so no
@@ -156,7 +161,12 @@ module tt_um_wakeword #(
 
   wire is_tap  = (stg >= STG_W'(TAP0)) && (stg < STG_W'(TAP0 + NBAND));
 
-  wire signed [BAND_W-1:0] band = BAND_W'(casc_in) - BAND_W'(casc_nx);
+  // Explicit sign extension everywhere a signed value is widened: yosys
+  // zero-extends `N'(signed_expr)` where the LRM (and iverilog, and the
+  // Python model) sign-extend. Found by simulating the netlist.
+  wire signed [BAND_W-1:0] casc_in_w = {casc_in[STATE_W-1], casc_in};
+  wire signed [BAND_W-1:0] casc_nx_w = {casc_nx[STATE_W-1], casc_nx};
+  wire signed [BAND_W-1:0] band = casc_in_w - casc_nx_w;
   wire        [BAND_W-2:0] bmag = band[BAND_W-1] ? (~band[BAND_W-2:0] + 1'b1)
                                                  : band[BAND_W-2:0];
 
@@ -220,7 +230,7 @@ module tt_um_wakeword #(
   // so centring costs nothing in silicon.
   wire signed [HACC_W-1:0] hb = $signed(WW_HBIAS[HACC_W*c_hd +: HACC_W]);
   wire signed [HACC_W-1:0] acc_cur = (c_slot == '0) ? hb : hacc[0];
-  wire signed [HACC_W:0]   acc_wide = (HACC_W+1)'(acc_cur) + (HACC_W+1)'(dot);
+  wire signed [HACC_W:0]   acc_wide = {acc_cur[HACC_W-1], acc_cur} + {dot[HACC_W-1], dot};
   localparam signed [HACC_W:0] HA_MAX =  (1 << (HACC_W-1)) - 1;
   localparam signed [HACC_W:0] HA_MIN = -(1 << (HACC_W-1));
   wire signed [HACC_W-1:0] acc_next =
@@ -242,9 +252,12 @@ module tt_um_wakeword #(
   wire signed [OSUM_W-1:0] osum_next = osum_cur + o_term;
 
   // Threshold: the trained constant, trimmed by the board's DIP switches.
-  wire signed [SCORE_W-1:0] trim   = SCORE_W'($signed({1'b0, ui_in[7:1]}) - 8'sd64) <<< 2;
+  // trim = (ui_in[7:1] - 64) * 4, range -256..+252, as a SCORE_W-bit signed value.
+  wire signed [7:0]         trim8  = $signed({1'b0, ui_in[7:1]}) - 8'sd64;
+  wire signed [SCORE_W-1:0] trim   = {{(SCORE_W-8){trim8[7]}}, trim8} <<< 2;
   wire signed [SCORE_W-1:0] thresh = $signed(WW_THRESH_PK) + trim;
-  wire fire = win_end && last_h && (SCORE_W'(osum_next) > thresh);
+  wire signed [SCORE_W-1:0] osum_w = {{(SCORE_W-OSUM_W){osum_next[OSUM_W-1]}}, osum_next};
+  wire fire = win_end && last_h && (osum_w > thresh);
 
   // ---------------------------------------------------------------------
   // Sequencer

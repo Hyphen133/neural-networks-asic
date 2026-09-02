@@ -18,11 +18,15 @@
 /* Testbench wrapper for tt_um_wakeword. */
 module tb ();
 
+  // Waveforms for the RTL runs only: dumping every net of the gate-level
+  // netlist at the full frame length writes tens of GB and dominates runtime.
+`ifndef GL_TEST
   initial begin
     $dumpfile("tb.fst");
     $dumpvars(0, tb);
     #1;
   end
+`endif
 
   reg        clk;
   reg        rst_n;
@@ -34,12 +38,8 @@ module tb ();
   wire [7:0] uio_oe;
 
 `ifdef GL_TEST
-  wire VPWR = 1'b1;
-  wire VGND = 1'b0;
-
+  // The IHP flow emits an unpowered netlist (no VPWR/VGND ports).
   tt_um_wakeword user_project (
-      .VPWR   (VPWR),
-      .VGND   (VGND),
 `else
   tt_um_wakeword #(
       .FRAME_LOG2(`WW_FRAME_LOG2),

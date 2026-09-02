@@ -24,7 +24,12 @@ SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 FRAME_LOG2 = int(os.environ.get("FRAME_LOG2", "8"))
 NHID, HACC_W, HSHIFT, FEAT_OFF = 4, 6, 1, 6
 NPHASE = 2
-NFRAMES_RUN = int(os.environ.get("NFRAMES", "40"))
+GATES = os.environ.get("GATES", "") == "yes"
+# 40 frames at FRAME_LOG2=8 is 13 M clocks (~20 s). At the tape-out frame
+# length every frame is 256x longer, so default to 8 frames there and to the
+# minimum the checks accept (5) on the gate-level netlist; NFRAMES= overrides.
+NFRAMES_RUN = int(os.environ.get("NFRAMES",
+                                 "40" if FRAME_LOG2 <= 10 else ("5" if GATES else "8")))
 
 
 def test_cfg():
@@ -103,6 +108,24 @@ PDM_DIV = wwhw.PDM_DIV          # clocks per mic tick (32)
 S_CLASS = 2                     # FSM state that runs the template
 
 
+def read_state(dut):
+    """FSM state: the RTL register, or the debug pins on the gate-level netlist."""
+    if GATES:
+        return (int(dut.uio_out.value) >> 5) & 0b11
+    return int(dut.user_project.st.value)
+
+
+def read_fmax(dut, nband):
+    """Per-band frame maxima at S_CLASS entry.
+
+    On the netlist only band 0 is observable (uo_out[7:4]); the ring is back in
+    band order at that moment, so uo_out[7:4] is fmax[0].
+    """
+    if GATES:
+        return [(int(dut.uo_out.value) >> 4) & 0xF]
+    return [int(dut.user_project.fmax[i].value) for i in range(nband)]
+
+
 class Bench:
     def __init__(self, dut, cfg):
         self.dut, self.cfg = dut, cfg
@@ -159,14 +182,14 @@ async def test_frontend_bit_exact(dut):
         b.set_bit(bits[tick_i])
         for _ in range(PDM_DIV):
             await RisingEdge(dut.clk)
-            st = int(dut.user_project.st.value)
+            st = read_state(dut)
             if st == S_CLASS and prev_st != S_CLASS:
-                got.append([int(dut.user_project.fmax[i].value)
-                            for i in range(cfg.nband)])
+                got.append(read_fmax(dut, cfg.nband))
             prev_st = st
 
     n = min(len(got), len(golden))
     assert n >= 4, f"only captured {n} frames"
+    golden = [list(g[:len(got[0])]) for g in golden]   # GL: band 0 only
     bad = [(i, got[i], golden[i]) for i in range(n) if got[i] != golden[i]]
     for i, g, e in bad[:5]:
         dut._log.error(f"frame {i}: RTL {g} golden {e}")
@@ -201,7 +224,7 @@ async def test_detector_matches_model(dut):
         b.set_bit(bits[tick_i], trim)
         for _ in range(PDM_DIV):
             await RisingEdge(dut.clk)
-            st = int(dut.user_project.st.value)
+            st = read_state(dut)
             if st == S_CLASS and prev_st != S_CLASS and frames < len(golden):
                 det.push_frame(golden[frames])
                 frames += 1

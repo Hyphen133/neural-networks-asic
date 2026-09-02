@@ -1,22 +1,24 @@
 # "Sheila" wake-word spotter on a 1×1 tile
 
-**Shipped: 24 643 µm² (78.7 % tile utilisation), 89.3 % test AUC, verified
-bit-exact against the golden model.** PDM microphone in, LED out, no host, no
+**Tape-out candidate: hardened through the TinyTapeout LibreLane flow on a
+1×1 IHP tile with zero DRC, 89.1 % test AUC, verified bit-exact against the
+golden model at RTL and gate level.** PDM microphone in, LED out, no host, no
 memory, no weights to load.
 
 | | |
 |---|---|
 | keyword | "sheila" (Google Speech Commands v0.02, CC BY 4.0) |
-| test AUC | **89.3 %** (tie-aware, speaker-disjoint split) |
-| area | 24 643 µm² of 31 318 µm² = **78.7 %** |
-| flip-flops | 225 |
+| test AUC | **89.1 %** (tie-aware, speaker-disjoint split) |
+| classifier | H=4 ternary hidden layer, **6-bit** saturating accumulator |
+| synthesised cells | 21 372 µm² (LibreLane yosys) = 68.2 % of the tile, 73.8 % of the core |
+| placed, incl. hold buffers | 27 744 µm² = **95.9 % of the core** |
+| flip-flops | 204 |
 | latency | one decision every 336 ms (2 staggered 671 ms windows) |
-| verification | 3 cocotb tests pass; front end bit-exact frame-for-frame |
+| verification | 3 cocotb tests pass at short and full frame length and on the gate-level netlist |
 
-`tiles: "1x1"` — but 78.7 % is above OpenLane's 60 % default density, so
-`FP_CORE_UTIL` has to be raised. The ttihp template notes ~80 % has routed.
-**That is the one real risk in this design.** Dropping to `STATE_W=9` gives
-73.1 %; the linear-template variant gives 62.2 % at 83.6 % AUC.
+See "Tape-out state" at the end for the flow numbers and what the yosys
+estimate below missed. Sections 1–6 are the design-space trail, kept intact;
+their area figures are yosys cell area, which the flow inflates by roughly 30 %.
 
 ## How it got there
 
@@ -351,4 +353,130 @@ Reproducing:
 python train/extract_all.py  --per-word 1500 --jobs 10   # ~3 min
 python train/sweep_words.py  --mode screen --epochs 60 --jobs 10
 python train/sweep_words.py  --mode exact --epochs 250 --seeds 3 --jobs 10
+```
+
+---
+
+## 7. Tape-out state (what the LibreLane flow actually says)
+
+Everything above measured area with a bare yosys `synth; abc; stat` against
+the sg13g2 liberty. The TinyTapeout flow (LibreLane 3, `tt-gds-action@ttihp26b`,
+run locally with `./harden_local.sh`) adds cells that estimate never sees, and
+the first real run of the "shipped" design **did not fit**: 105.7 % utilisation
+at global placement.
+
+| stage, original RTL | µm² | of the 28 941 µm² core |
+|---|---:|---:|
+| yosys estimate (this file, above) | 24 643 | 85 % |
+| LibreLane synthesis | 27 128 | 93.7 % |
+| + tap/endcap, pin-density adjust | 30 605 | **105.7 %, GPL aborts** |
+
+Three effects, in order of size:
+
+1. **Synchronous reset in a library with no reset-less flop.** sg13g2's only
+   D flip-flop is `dfrbpq` (async reset). A synchronous reset therefore costs a
+   `tiehi` cell on every `RESET_B` pin plus a reset mux in front of every D:
+   245 tie cells and about the same again in gating, ~3 000 µm². Fix:
+   asynchronous reset (`always_ff @(posedge clk or negedge rst_n)`).
+   TinyTapeout deasserts `rst_n` synchronously to `clk`, so this is safe.
+2. **Hold buffers.** The flow's generic SDC carries 0.25 ns clock uncertainty
+   and TinyTapeout adds a 0.1 ns hold margin. Every flop with an enable has a
+   Q→mux→D self-loop of ~0.3 ns, which is inside that window, so the
+   post-CTS resizer inserts one hold buffer (~17 µm²) per flop. Flops cost
+   ~73 µm² each all-in, not 49. Not negotiable: the margin is there for the
+   fast corner and the TT clock network.
+3. **Fanout repair.** `MAX_FANOUT_CONSTRAINT=10` adds ~125 buffers (~1 000 µm²)
+   on the reset, the FSM state and the tick. Raising the constraint in
+   `config.json` had no effect (the SDC wins).
+
+Model-neutral RTL changes, all bit-exact against `wwhw.py`:
+
+| change | yosys µm² | flops |
+|---|---:|---:|
+| original | 25 600¹ | 237 |
+| async reset, `prev_v` removed | 23 242 | 215 |
+| + `hacc` and `fmax` as rotating rings, `osum` narrowed | 21 927 | 212 |
+| + `HACC_W` 7→6 (model change, see below) | **21 185** | **204** |
+
+¹ yosys 0.62 in the LibreLane image; the 24 643 figure above was an older yosys.
+
+That was still ~1 500 µm² short, so one model parameter had to move. Ablation
+on the same features, 2 seeds each, test AUC:
+
+| change | test AUC | yosys µm² |
+|---|---:|---:|
+| original: 2 windows, 7-bit acc, 10-bit state | 89.3 % | 21 927 |
+| **6-bit accumulator** | **89.1 %** | **21 185** |
+| one window (NPHASE=1) | 86.2 % | ~19 800 |
+| 9-bit cascade state | 87.2 % | 21 092 |
+| 9-bit state + 6-bit acc | 82.2 % | 20 243 |
+| all three | 81.7 % | 18 657 |
+
+The 6-bit accumulator is free on these features (its dynamic range was never
+used: hidden biases are −4…4). The 9-bit state is not: it costs 2 points alone
+and 7 with the narrow accumulator, because halving the state amplitude shifts
+the log features down by one and the accumulator then saturates. One window
+costs 3 points and would be the next lever if ever needed. **Shipped: 6-bit
+accumulator, everything else as before.** Best of 6 seeds on val AUC (seed 3):
+val 87.8 %, test 89.1 %; the seed spread is 87.9–90.6 % test.
+
+Flow result for the shipped RTL (`runs/wokwi6`, `harden_local.sh`):
+
+| | |
+|---|---|
+| synthesis | 21 372 µm², 1 246 cells, 205 flops |
+| after fanout repair + CTS | 22 976 µm² (79.4 %) |
+| after hold repair (292 buffers) | 27 744 µm² (**95.9 % of core**) |
+| routing | 0 DRC, 0 antenna violations |
+| timing | setup slack 6.9 ns at slow/125 °C, hold slack +0.15 ns at fast/−40 °C |
+| LVS, magic DRC, lint, max slew/cap | all 0 |
+| remaining warnings | 14 max-fanout (informational), generic SDC |
+
+96 % is high; it routed clean, but there is no room left. Any future change
+that adds flops needs the one-window fallback.
+
+### The gate-level simulation found a real bug
+
+The first gate-level run failed the front-end check while the RTL passed it.
+Simulating the RTL and yosys's generic netlist of it side by side (one PDM
+stream, compare every cycle) put the divergence at the very first tick:
+
+```
+tick 0: pdm=0 | rtl x_in=-128 | netlist x_in=+128
+```
+
+The offending line was `x_in = pdm_bit ? STATE_W'(IN_AMP) : -STATE_W'(IN_AMP)`.
+iverilog and the Python model read `-STATE_W'(IN_AMP)` as "negate the cast";
+yosys reads it as a cast with a negated width and produces `+IN_AMP`. The
+synthesised chip would have rectified the microphone: every sample +128, the
+filterbank fed DC, nothing to detect. **This bug was in the original design
+too** and would have shipped; the yosys area estimates, the cocotb RTL tests
+and LibreLane's lint all pass over it. Fixed by giving the two constants as
+signed localparams and dropping the casts. All other widening casts of signed
+values were replaced by explicit sign extension at the same time as a
+precaution. The RTL-vs-netlist comparison now shows 0 mismatches over 40
+frames.
+
+Two practical notes for anyone doing this on IHP:
+
+- The stock `sg13g2_stdcell.v` does not compile in stock iverilog (`ifnone`
+  on edge-sensitive paths). TinyTapeout's CI uses its own patched iverilog
+  build (x86 only). Locally, a copy with the `specify` blocks stripped and the
+  `delayed_*` nets tied through works; `test/Makefile` takes it as `GL_CELLS=`.
+- Do not dump waveforms in the gate-level run: `$dumpvars(0, tb)` on the
+  netlist at the full frame length wrote 87 GB before it was stopped.
+
+Verification of the shipped RTL: the three cocotb tests pass at `FRAME_LOG2=8`
+(40 frames) and `FRAME_LOG2=16` (RTL) and on the gate-level netlist from the
+run above (5 frames, no waveform). What the two 1-window/9-bit experiments did
+**not** change: recall at a usable false-alarm rate remains unmeasured (see
+"What is still weak").
+
+Reproducing:
+
+```bash
+python train/train_sheila.py --tag sheila_hw --arch mlp --H 4 --WL 1 --shift 1 \
+    --nphase 2 --accw 6 --epochs 250 --seed 3 --emit        # writes src/ww_weights.svh
+./harden_local.sh                                             # LibreLane in Docker
+cd test && make && FRAME_LOG2=16 make && GATES=yes make       # RTL, full rate, GL
 ```
