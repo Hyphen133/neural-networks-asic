@@ -51,6 +51,7 @@ area_check.sh           yosys cell-area estimate against the sg13g2 liberty
 harden_local.sh         the TinyTapeout LibreLane flow, locally, in Docker
 FINDINGS.md             the measurement trail, including why the first version did not fit
 TAPEOUT_PLAN.md         the decisions behind this repository's shape
+hardened/sheila, hardened/drone   final physical designs from LibreLane: GDS, LEF, DEF, netlists, SDC, lib, metrics, render
 ```
 
 ## Same silicon, second target: drone detection
@@ -62,6 +63,36 @@ detector trained on DADS (114 k clips): **95.3 % test AUC** (fp32 ceiling
 Build it with `WEIGHTS=drone` (`test/`, `harden_local.sh`) or
 `DEFINES=-DWW_WEIGHTS_DRONE ./area_check.sh`; the default build is still
 sheila. Data, split, results and limits: [docs/DRONE.md](docs/DRONE.md).
+
+## Hardened designs
+
+The final physical designs are checked in under `hardened/`, one directory per
+target, straight from the `final/` stage of the LibreLane 3.0.6 run described
+in `harden_local.sh` (`runs/wokwi6` for sheila, `runs/drone` for the drone
+constants). Each holds `gds/tt_um_wakeword.gds` (the tape-out layout),
+`lef/`, `def/`, `nl/` (gate-level netlist, the one the cocotb gate-level test
+runs against), `pnl/` (powered netlist), `sdc/`, `lib/`, `vh/`, the flow
+`metrics.json` and `metrics.csv`, and `render/tt_um_wakeword.png`.
+
+| | sheila | drone |
+|---|---|---|
+| tile | 1×1 IHP sg13g2, 31 318 µm² die, 28 942 µm² core | same |
+| std cells / instances | 1714 / 2102 | 1652 / 2089 |
+| std cell area | 27 749 µm² | 27 365 µm² |
+| core utilisation | 95.9 % | 94.6 % |
+| setup slack, slow corner (1.08 V, 125 °C) | +6.85 ns | +6.49 ns |
+| hold slack, fast corner (1.32 V, −40 °C) | +0.148 ns | +0.125 ns |
+| setup / hold violations, all corners | 0 / 0 | 0 / 0 |
+| magic DRC / LVS errors | 0 / 0 | 0 / 0 |
+| antenna, slew, cap violations | 0 | 0 |
+| max-fanout warnings | 14 | 15 |
+| total power estimate (typ corner) | 2.8 mW | 4.3 mW |
+
+Both were hardened from the same `src/tt_um_wakeword.sv` at commit `42f7cd3`
+or later, i.e. after the mic-input sign fix; only the weight header differs.
+The max-fanout counts are warnings from the ttihp template's fanout limit and
+are not sign-off violations. To rebuild: `./harden_local.sh` (sheila) or
+`WEIGHTS=drone ./harden_local.sh`, then copy `runs/<tag>/final/` here.
 
 ## Quick start
 
