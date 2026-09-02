@@ -290,3 +290,65 @@ pre-activation during training and fold the scale into the constant bias at
 export; warm up with mean pooling before switching to max). I have not done
 that work, so the two-layer numbers above should be read as a floor, not a
 result.
+
+---
+
+## 6. Is "sheila" the right keyword? (35-word sweep)
+
+Yes — it wins the whole corpus, on the shipped hardware model and on both
+float probes. The front end carries no notion of a keyword, so its output is
+extracted **once** over all 35 Speech Commands words (1 500 clips/word,
+52 500 clips, official speaker-disjoint hash split) and then re-labelled per
+candidate: `train/extract_all.py`, then `train/sweep_words.py`.
+
+Exact shipped semantics (H=4 ternary, 7-bit accumulator saturated *every*
+frame, `clamp(acc>>1, 0, 15)`, ternary output layer, 2 staggered 16-frame
+windows), 250 epochs, best-of-3 restarts picked on val, tie-aware AUC on clean
+test clips:
+
+| rank | word | hw AUC | fp32 linear | fp32 MLP-32 |
+|---:|---|---:|---:|---:|
+| 1 | **sheila** | **89.1 %** | **82.6 %** | **94.1 %** |
+| 2 | six | 85.5 % | 79.0 % | 94.0 % |
+| 3 | visual | 83.9 % | 77.6 % | 91.1 % |
+| 4 | yes | 81.9 % | 75.3 % | 89.3 % |
+| 5 | backward | 81.0 % | 58.9 % | 89.1 % |
+| 6 | house | 79.7 % | 70.7 % | 89.6 % |
+| … | marvin | 72.6 % | 68.0 % | 82.1 % |
+| 35 | down | 60.6 % | 59.3 % | 71.2 % |
+
+Full table in `artifacts/ww_sweep_{screen,exact}.json`. A confirmation run with
+6 restarts from a different seed base reproduces the ordering (sheila 88.7 %,
+six 87.2 %, yes 84.6 %, visual 82.6 %, marvin 74.4 %), so the top of the list
+is not seed luck. With ~150 test positives per word the sampling error on one
+AUC is ~2.5 points: sheila vs. six is a real but narrow lead, sheila vs.
+everything else is not close.
+
+Why these words: the front end is five log-magnitude band envelopes at 41.9 ms
+resolution over a 671 ms window, so a keyword is only visible as a
+*spectral-energy trajectory*. `sheila` opens with a broadband `/ʃ/` — energy in
+the top bands that almost nothing else in the corpus produces — then moves to
+a front vowel and an `/l/`, filling most of the window. `six` wins for the same
+reason (`/s/…/ks/`), `visual` for its two fricatives. The losers are short
+voiced monosyllables (`down`, `on`, `go`, `bird`, `bed`): one vowel blob in the
+low bands, and every other word looks the same.
+
+Two things this does **not** say. Recall at a usable false-alarm rate is still
+unmeasured — 5 264 test clips put the floor at ~2 FA/hour, and the sweep's
+`R@5FA` column is at most 6 % for every word, which is the measurement floor
+talking as much as the model (§"What is still weak"). And the corpus caps the
+question at 35 single words; a purpose-recorded multi-syllable phrase with a
+sibilant onset ("hey sheila") should beat everything here, but there is no data
+for it.
+
+**Conclusion: keep `sheila`.** The keyword is not the lever — it is already
+optimal for this corpus. The lever is classifier capacity: H=8 reaches 91.6 %
+AUC but needs 95.6 % tile utilisation, i.e. 2×1 tiles.
+
+Reproducing:
+
+```bash
+python wakeword/train/extract_all.py  --per-word 1500 --jobs 10   # ~3 min
+python wakeword/train/sweep_words.py  --mode screen --epochs 60 --jobs 10
+python wakeword/train/sweep_words.py  --mode exact --epochs 250 --seeds 3 --jobs 10
+```
