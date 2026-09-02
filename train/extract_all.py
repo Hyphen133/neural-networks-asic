@@ -5,7 +5,7 @@ output can be extracted once and then re-labelled for any candidate wake word.
 That is what makes a 35-way keyword sweep affordable: one extraction pass,
 then one cheap training run per candidate (see sweep_words.py).
 
-    python wakeword/train/extract_all.py --per-word 1500 --jobs 8
+    python train/extract_all.py --per-word 1500 --jobs 8
 
 Writes artifacts/ww_feats_allwords.npz with
     feats   (N, frames, nband) uint8
@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wwdata  # noqa: E402
 import wwhw  # noqa: E402
 
-ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "artifacts")
+ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "artifacts")
 NFRAME_EXT = 24
 
 # The shipped reduced front end (see FINDINGS.md): NSTAGE=9, NBAND=5,

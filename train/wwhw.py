@@ -1,4 +1,4 @@
-"""Bit-exact software twin of wakeword/src/tt_um_wakeword.sv.
+"""Bit-exact software twin of src/tt_um_wakeword.sv.
 
 The chip has no host: a PDM microphone bit-stream goes in one pin, an LED comes
 out another. Everything between is fixed at tape-out.

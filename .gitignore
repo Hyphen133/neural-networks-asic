@@ -8,7 +8,6 @@ __pycache__/
 
 # Datasets (downloadable — see README)
 artifacts/data/
-train/data/
 *.tar.gz
 
 # Simulation outputs
@@ -18,3 +17,14 @@ results.xml
 
 # Vendored PDK liberty file
 artifacts/sg13g2.lib
+
+# TinyTapeout / LibreLane
+*.fst
+*.fst.hier
+runs/
+tt_submission/
+src/user_config.json
+src/config_merged.json
+test/gate_level_netlist.v
+src/config_*.json
+!src/config.json

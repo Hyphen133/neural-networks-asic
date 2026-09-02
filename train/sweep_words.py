@@ -13,8 +13,8 @@ float probe:
           output layer, 2 staggered 16-frame windows. Same semantics as
           train_sheila.py, which is what tt_um_wakeword implements.
 
-    python wakeword/train/sweep_words.py --mode screen --jobs 10
-    python wakeword/train/sweep_words.py --mode exact --words sheila seven ...
+    python train/sweep_words.py --mode screen --jobs 10
+    python train/sweep_words.py --mode exact --words sheila seven ...
 
 Writes artifacts/ww_sweep_<mode>.json.
 """
@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import train_sheila as TS  # noqa: E402  (QW/RQ/SatSTE/build/auc/operating_points)
 import wwhw  # noqa: E402
 
-ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "artifacts")
+ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "artifacts")
 _G = {}
 
 

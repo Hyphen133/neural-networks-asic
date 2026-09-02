@@ -198,11 +198,11 @@ open thread, not a conclusion.
 # dataset (2.3 GB, CC BY 4.0)
 curl -O http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz
 
-python wakeword/train/extract.py  --targets marvin sheila --aug 3   # ~8 min
-python wakeword/train/train_ww.py --tag marvin_sheila --kd 0.0      # baseline
-python wakeword/train/train_ww.py --tag marvin_sheila --kd 0.7      # distilled
-cd wakeword/test && make                                            # 3 tests
-./wakeword/area_check.sh
+python train/extract.py  --targets marvin sheila --aug 3   # ~8 min
+python train/train_ww.py --tag marvin_sheila --kd 0.0      # baseline
+python train/train_ww.py --tag marvin_sheila --kd 0.7      # distilled
+cd test && make                                            # 3 tests
+./area_check.sh
 ```
 
 ## What is in here regardless
@@ -348,7 +348,7 @@ AUC but needs 95.6 % tile utilisation, i.e. 2×1 tiles.
 Reproducing:
 
 ```bash
-python wakeword/train/extract_all.py  --per-word 1500 --jobs 10   # ~3 min
-python wakeword/train/sweep_words.py  --mode screen --epochs 60 --jobs 10
-python wakeword/train/sweep_words.py  --mode exact --epochs 250 --seeds 3 --jobs 10
+python train/extract_all.py  --per-word 1500 --jobs 10   # ~3 min
+python train/sweep_words.py  --mode screen --epochs 60 --jobs 10
+python train/sweep_words.py  --mode exact --epochs 250 --seeds 3 --jobs 10
 ```

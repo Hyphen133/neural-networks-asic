@@ -4,7 +4,7 @@ The front end is fixed silicon -- nothing about it is learned -- so it is run
 once and the 24 x NBAND log-magnitude maps are cached. Training then only ever
 touches the template weights.
 
-    python wakeword/train/extract.py --targets marvin --aug 3
+    python train/extract.py --targets marvin --aug 3
 
 Writes artifacts/ww_feats_<tag>.npz with feats (N, NFRAME_EXT, NBAND) uint8,
 labels, splits, and the HWConfig used.
@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wwdata  # noqa: E402
 import wwhw  # noqa: E402
 
-ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "artifacts")
+ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "artifacts")
 NFRAME_EXT = 24          # 24 x 41.9 ms = 1.006 s -- the whole clip
 
 

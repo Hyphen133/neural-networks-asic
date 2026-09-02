@@ -1,12 +1,25 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-/* Testbench wrapper for tt_um_mnist_nn -- instantiates the module and makes
-   all the TinyTapeout ports visible to cocotb. */
+// Parameter overrides come in as +defines; iverilog's -P silently no-ops here.
+// Defaults are the shipped RTL parameters; the Makefile shortens FRAME_LOG2
+// for the fast RTL run. The gate-level netlist has no parameters, so under
+// GL_TEST the design is instantiated as-is and must be the full-rate build.
+`ifndef WW_FRAME_LOG2
+  `define WW_FRAME_LOG2 16
+`endif
+`ifndef WW_NBAND
+  `define WW_NBAND 5
+`endif
+`ifndef WW_NHID
+  `define WW_NHID 4
+`endif
+
+/* Testbench wrapper for tt_um_wakeword. */
 module tb ();
 
   initial begin
-    $dumpfile("tb.vcd");
+    $dumpfile("tb.fst");
     $dumpvars(0, tb);
     #1;
   end
@@ -23,12 +36,16 @@ module tb ();
 `ifdef GL_TEST
   wire VPWR = 1'b1;
   wire VGND = 1'b0;
-`endif
 
-  tt_um_mnist_nn user_project (
-`ifdef GL_TEST
+  tt_um_wakeword user_project (
       .VPWR   (VPWR),
       .VGND   (VGND),
+`else
+  tt_um_wakeword #(
+      .FRAME_LOG2(`WW_FRAME_LOG2),
+      .NBAND     (`WW_NBAND),
+      .NHID      (`WW_NHID)
+  ) user_project (
 `endif
       .ui_in  (ui_in),
       .uo_out (uo_out),

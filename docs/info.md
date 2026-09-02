@@ -1,102 +1,75 @@
 <!---
-This file is used to generate your project datasheet. Please fill in the information below.
+
+This file is used to generate your project datasheet. Please fill in the information below and delete any unused
+sections.
+
+You can also include images in this folder and reference them in the markdown. Each image must be less than
+512 kb in size, and the combined size of all images must be less than 1 MB.
 -->
 
 ## How it works
 
-This is a **handwritten-digit classifier** — a fully connected neural network
-`784 → 16 → 10` — running entirely in integer arithmetic on a single 1×1 tile.
+A self-contained wake-word spotter for the word **"sheila"**. A PDM microphone
+bit-stream goes in on one pin and an LED comes out on another. There is no
+host, no memory, and nothing to load: the classifier weights are hard-wired
+constants baked into the logic at tape-out.
 
-The trick that makes it fit is that **the chip stores no weights and no image**.
-A 784→16 layer has 12 544 weights; at 4 bits each that is 6 kB, far more than a
-1×1 tile can hold. Instead the host streams one `{pixel, weight}` pair per clock
-and the chip keeps only the running sum.
+The signal chain is integer throughout and contains no multiplier:
 
-The second trick is the loop order. If you iterate *pixel-outer*, you need one
-accumulator per hidden neuron. If you iterate **neuron-outer** — all 784 pixels
-for hidden unit 0, then all 784 for unit 1, and so on — a **single** 20-bit
-accumulator suffices, and it is reused again for the output layer. That removes
-15 of the 16 accumulators.
+1. **Mic clock and sampling.** The chip divides its 50 MHz clock by 32 to
+   produce a 1.5625 MHz PDM clock on `uo[0]` and samples one microphone bit
+   per period on `ui[0]`.
+2. **Octave filterbank.** A 9-stage dyadic one-pole cascade
+   (`state += (in - state) >> 2`, stage *b* clocked every 2^b ticks) built as
+   a rotating shift register, so one shared subtract-shift-add serves every
+   stage. Adjacent stage differences give five octave band-pass signals.
+3. **Log magnitude.** A priority encoder plus one mantissa bit turns each
+   band into a 4-bit log2 level in 3 dB steps. The log is free: it is the
+   encoder output, not a computation.
+4. **Framing.** Per-band maximum over 41.9 ms frames (65 536 mic ticks).
+   Sixteen frames make one 671 ms window.
+5. **Classifier.** Four hidden units, each a 16×5 ternary template
+   ({-1, 0, +1}) accumulated frame by frame into a 7-bit saturating
+   accumulator, then `clamp(acc >> 1, 0, 15)`. A ternary output layer sums
+   the four activations and compares against a threshold. Two staggered
+   windows (hop = 8 frames) mean the word need not align with a window
+   boundary.
+6. **Detect.** On a hit the detect output is latched high for 16 frames
+   (about 0.67 s).
 
-```
-                       ui_in[7:0]                uo_out[3:0]
-  host ──{pixel, weight}──► ┌───────────────┐ ──► predicted digit
-         one byte / clock   │  4×4 MAC      │
-                            │  20-bit acc   │
-                            │  >>s, clamp   │
-                            │  16×4b hidden │
-                            │  argmax       │
-                            └───────────────┘
-```
-
-Arithmetic (identical in the RTL and in the PyTorch training script):
-
-| value              | format                       |
-|--------------------|------------------------------|
-| pixel              | uint4, 0…15                  |
-| weight             | int4 two's complement, −8…+7 |
-| product            | int8, −120…+105              |
-| accumulator        | int20                        |
-| hidden activation  | `clamp(acc >>> s, 0, 15)` → uint4 |
-| output score       | int20, compared on the fly   |
-| result             | 4-bit class                  |
-
-Only the winning class and its score are kept, so there is no 10-element score
-vector on chip.
-
-### Interface
-
-`uio[0] = in_valid`, `uio[1] = is_cmd`. One byte is consumed per clock while
-`in_valid` is high; the host may stall for any number of cycles.
-
-**Data byte, layer 1:** `{pixel[3:0], weight[3:0]}` → `acc += pixel × weight`.
-**Data byte, layer 2:** `{x, weight[3:0]}` → `acc += hidden[i++] × weight`.
-
-**Command byte** = `{opcode[3:0], imm[3:0]}`:
-
-| op  | name          | effect                                             |
-|-----|---------------|----------------------------------------------------|
-| 0x0 | `NOP`         | –                                                   |
-| 0x1 | `RESET`       | clear accumulator, hidden regs, argmax, flags       |
-| 0x2 | `SET_SHIFT`   | `shift1 = imm` (layer-1 requantisation)             |
-| 0x3 | `LOAD_ACC`    | next 3 data bytes are a 20-bit bias, MSB first      |
-| 0x4 | `ZERO_ACC`    | `acc = 0`                                           |
-| 0x5 | `NEURON_DONE` | `hidden[i++] = clamp(acc >>> shift1, 0, 15)`        |
-| 0x6 | `START_L2`    | switch to the output layer                          |
-| 0x7 | `CLASS_DONE`  | argmax update, next class                           |
-| 0x8 | `FINISH`      | raise `result_valid`                                |
-| 0x9 | `RD_HIDDEN`   | drive `hidden[imm]` onto `uo_out[3:0]`              |
-| 0xA | `DBG_OFF`     | back to showing the predicted class                 |
-
-Classifying one image is 12 838 bytes ≈ **257 µs at 50 MHz (≈3 900 img/s)**.
+The weights come from quantisation-aware training on Google Speech Commands
+v0.02 against a bit-exact Python model of this exact datapath, including the
+per-frame accumulator saturation. Measured AUC on the speaker-disjoint test
+split is 89 %. Recall at a fixed false-alarm rate has **not** been measured;
+see `FINDINGS.md` in the repository for what is and is not established.
 
 ## How to test
 
-1. Quantise the image to 4 bits per pixel on the host: `p4 = round(p8 × 15/255)`.
-2. Emit the byte stream (see `train/hw.py: build_stream`):
+1. Connect a 3.3 V PDM MEMS microphone: its `DATA` pin to `ui[0]`, its
+   `CLK` pin to `uo[0]`, plus 3.3 V and ground from the board. Leave the mic's
+   L/R select pin at its default (data valid on the clock edge the chip
+   samples on: mid-way through the high phase).
+2. Set the threshold trim on `ui[7:1]` to the neutral value `1000000`
+   (`ui[7]` = 1, `ui[6:1]` = 0). The trim is a signed offset added to the
+   trained threshold in steps of 4; higher values make the detector stricter,
+   lower values make it fire more readily.
+3. Apply the 50 MHz clock and release reset.
+4. Say "sheila" at conversational distance. `uo[3]` (and its mirrors `uo[1]`,
+   `uo[2]`) go high for about two thirds of a second. `uo[7:4]` show the
+   live level of the lowest band as a 4-bit value, which is a quick way to
+   confirm the microphone is alive: it should move when you speak.
+5. If it triggers too often on other speech, raise the trim; if it never
+   fires, lower it.
 
-```
-RESET, SET_SHIFT(6)
-for n in 0..15:  LOAD_ACC, bias1[n] (3 bytes), 784 × {pixel, w1[n][p]}, NEURON_DONE
-START_L2
-for c in 0..9:   LOAD_ACC, bias2[c] (3 bytes), 16 × {0, w2[c][h]}, CLASS_DONE
-FINISH
-```
-
-3. Read `uo_out[3:0]` once `uo_out[4]` (`result_valid`) is high.
-   `uo_out[6]` must stay low — it is a sticky accumulator-overflow flag.
-
-`train/export.py --stream` writes a ready-to-play `.bin` (2 bytes per beat:
-data byte, then the `is_cmd` flag) for an MNIST test image, and the cocotb
-testbench in `test/` checks the RTL against a bit-exact Python model of the
-same arithmetic.
-
-Trained integer accuracy on the full 10 000-image MNIST test set is **95.47 %**
-for the shipped `784→16→10` W4A4 weights.
+The debug pins on `uio[7:0]` expose the frame index (`uio[3:0]`), the detect
+line (`uio[4]`), the FSM state (`uio[6:5]`) and the mic tick (`uio[7]`). They
+are outputs only.
 
 ## External hardware
 
-None. A microcontroller, FPGA or the TinyTapeout demo-board RP2040 acts as the
-weight/pixel streamer: it holds the ~6 kB weight blob and drives `ui_in`,
-`uio[0]` and `uio[1]`. A `weights_*.h` C header is generated by
-`train/export.py` for exactly that purpose.
+- One 3.3 V PDM MEMS microphone breakout (for example the Adafruit PDM MEMS
+  Microphone Breakout). Two signal wires: data to `ui[0]`, clock from
+  `uo[0]`.
+- The on-board LEDs on `uo[1..3]` show the detection; no additional LED is
+  required.
+- The on-board DIP switches on `ui[7:1]` set the threshold trim.

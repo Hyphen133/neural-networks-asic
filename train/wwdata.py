@@ -19,7 +19,7 @@ import wave
 import numpy as np
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "artifacts", "data", "speech_commands")
+                    "..", "artifacts", "data", "speech_commands")
 AUDIO_HZ = 16_000
 CLIP_LEN = AUDIO_HZ                      # 1 s
 

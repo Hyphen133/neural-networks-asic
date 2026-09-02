@@ -1,50 +1,48 @@
 # Tiny Tapeout project information
 project:
-  title:        "Streaming MNIST Neural Network"
+  title:        "Sheila Wake-Word Spotter"
   author:       "Jedrzej Hasiura"
   discord:      ""
-  description:  "W4A4 784-16-10 MNIST classifier: 4-bit MAC, weights streamed from the host, on-chip argmax"
+  description:  "Self-contained keyword spotter: PDM mic in, LED out. No host, no memory, no weights to load."
   language:     "SystemVerilog"
   clock_hz:     50000000
 
-  # A 1x1 IHP tile is ~202.08 x 154.98 um. Synthesised cell area for the
-  # default HIDDEN=16 configuration is ~15.7k um^2, i.e. ~50% tile utilisation
-  # against OpenLane's 60% default placement density. See area_check.sh.
+  # ~24.0k um^2 of cells in a 31.3k um^2 tile = 77% utilisation. Above
+  # OpenLane's 60% default, so raise FP_CORE_UTIL; the ttihp template notes
+  # densities up to ~80% have routed. See wakeword/area_check.sh.
   tiles: "1x1"
 
-  top_module:  "tt_um_mnist_nn"
+  top_module:  "tt_um_wakeword"
 
   source_files:
-    - "tt_um_mnist_nn.sv"
+    - "tt_um_wakeword.sv"
 
-# The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:
-  ui[0]: "data[0] - command/data byte"
-  ui[1]: "data[1]"
-  ui[2]: "data[2]"
-  ui[3]: "data[3] - layer weight nibble MSB (sign)"
-  ui[4]: "data[4] - pixel nibble LSB"
-  ui[5]: "data[5]"
-  ui[6]: "data[6]"
-  ui[7]: "data[7] - pixel nibble MSB"
+  ui[0]: "PDM microphone data in"
+  ui[1]: "threshold trim bit 0 (LSB) - DIP switch"
+  ui[2]: "threshold trim bit 1"
+  ui[3]: "threshold trim bit 2"
+  ui[4]: "threshold trim bit 3"
+  ui[5]: "threshold trim bit 4"
+  ui[6]: "threshold trim bit 5"
+  ui[7]: "threshold trim bit 6 (MSB) - 64 = no trim"
 
-  uo[0]: "class[0] (or hidden[] readback when debug is enabled)"
-  uo[1]: "class[1]"
-  uo[2]: "class[2]"
-  uo[3]: "class[3]"
-  uo[4]: "result_valid"
-  uo[5]: "in_layer2"
-  uo[6]: "acc_overflow (sticky)"
-  uo[7]: "ack - registered in_valid"
+  uo[0]: "PDM microphone clock out (1.5625 MHz)"
+  uo[1]: "detect - LED"
+  uo[2]: "detect (mirror)"
+  uo[3]: "detect (mirror)"
+  uo[4]: "debug: band-0 level bit 0"
+  uo[5]: "debug: band-0 level bit 1"
+  uo[6]: "debug: band-0 level bit 2"
+  uo[7]: "debug: band-0 level bit 3"
 
-  uio[0]: "in_valid (input)"
-  uio[1]: "is_cmd (input)"
-  uio[2]: "debug: hidden index[0]"
-  uio[3]: "debug: hidden index[1]"
-  uio[4]: "debug: hidden index[2]"
-  uio[5]: "debug: hidden index[3]"
-  uio[6]: "debug: state[0]"
-  uio[7]: "debug: state[1]"
+  uio[0]: "debug: frame index bit 0"
+  uio[1]: "debug: frame index bit 1"
+  uio[2]: "debug: frame index bit 2"
+  uio[3]: "debug: frame index bit 3"
+  uio[4]: "debug: detect"
+  uio[5]: "debug: FSM state bit 0"
+  uio[6]: "debug: FSM state bit 1"
+  uio[7]: "debug: mic tick"
 
-# Do not change!
 yaml_version: 6

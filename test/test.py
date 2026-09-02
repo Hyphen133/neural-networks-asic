@@ -1,14 +1,15 @@
-"""cocotb testbench: RTL vs. the bit-exact integer golden model in train/hw.py.
+"""cocotb testbench: tt_um_wakeword vs. the bit-exact model in wwhw.py.
 
-  make                     # 3 real MNIST images + directed tests
-  NUM_IMAGES=20 make       # more images
-  GATES=yes make           # gate-level (post-synthesis) run
+  make                 # fast: FRAME_LOG2=8, bit-exact front end + detector
+  SLOW=1 make          # full FRAME_LOG2=16 run on a real clip (~2 min)
 
-If artifacts/weights_w4_h16.json is missing the test falls back to
-deterministic pseudo-random weights, so it runs in a bare CI checkout.
+The fast build shortens the frame only; every other parameter, and the weight
+file, is what tapes out. The golden model is reconfigured to match, so this is
+a real equivalence check rather than a smoke test.
 """
 
 import os
+import re
 import sys
 
 import cocotb
@@ -17,253 +18,203 @@ from cocotb.triggers import ClockCycles, RisingEdge
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "train"))
 import numpy as np  # noqa: E402
-import hw  # noqa: E402
+import wwhw  # noqa: E402
 
-CLK_NS = 20  # 50 MHz, matches info.yaml clock_hz
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+FRAME_LOG2 = int(os.environ.get("FRAME_LOG2", "8"))
+NHID, HACC_W, HSHIFT, FEAT_OFF = 4, 7, 1, 6
+NPHASE = 2
+NFRAMES_RUN = int(os.environ.get("NFRAMES", "40"))
+
+
+def test_cfg():
+    # Matches the shipped RTL parameters; only the frame length is shortened.
+    return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=5, tap0=4,
+                         state_w=10, mant=1, feat_w=4, nphase=NPHASE,
+                         score_w=10)
 
 
 # ---------------------------------------------------------------------------
-# Low-level driver
+# Parse the generated weight header so RTL and model share one source of truth
 # ---------------------------------------------------------------------------
-class Driver:
-    """Feeds the (byte, is_cmd) protocol -- one byte per clock, no backpressure."""
+def load_weights():
+    """Parse the generated header so RTL and model share one source of truth."""
+    txt = open(os.path.join(SRC, "ww_weights.svh")).read()
+    def const(name):
+        m = re.search(name + r"\s*=\s*(\d+)'h([0-9a-fA-F]+)", txt)
+        return int(m.group(2), 16), int(m.group(1))
+    cfg = test_cfg()
+    H, NF, NB = NHID, cfg.nframe, cfg.nband
+    v, _ = const("WW_ROW")
+    W1 = np.zeros((H, NF, NB), dtype=np.int64)
+    for h in range(H):
+        for f in range(NF):
+            row = (v >> (2 * NB * (h * NF + f))) & ((1 << (2 * NB)) - 1)
+            for b in range(NB):
+                c = (row >> (2 * b)) & 0b11
+                W1[h, f, b] = 1 if c == 0b01 else (-1 if c == 0b11 else 0)
+    hv, _ = const("WW_HBIAS")
+    HB = []
+    for h in range(H):
+        u = (hv >> (HACC_W * h)) & ((1 << HACC_W) - 1)
+        HB.append(u - (1 << HACC_W) if u >> (HACC_W - 1) else u)
+    wv, _ = const("WW_W2")
+    W2 = []
+    for h in range(H):
+        c = (wv >> (2 * h)) & 0b11
+        W2.append(1 if c == 0b01 else (-1 if c == 0b11 else 0))
+    tv, tw = const("WW_THRESH_PK")
+    thr = tv - (1 << tw) if tv >> (tw - 1) else tv
+    return W1, np.array(HB), np.array(W2), thr
 
-    def __init__(self, dut):
-        self.dut = dut
 
-    def _idle(self):
-        self.dut.uio_in.value = 0
-        self.dut.ui_in.value = 0
+# ---------------------------------------------------------------------------
+# Stimulus
+# ---------------------------------------------------------------------------
+def golden_frames(bits, cfg, n_frames):
+    """Golden features for a bit sequence the testbench drives.
+
+    The RTL latches ui_in[0] mid-way through each mic period and consumes it
+    on the *next* period's cascade, so the chip sees one extra sample of
+    latency: its reset value, then the driven stream. Modelling that is the
+    difference between a bit-exact comparison and a confusing near-miss.
+    """
+    return wwhw.frontend_bits([0] + list(bits), cfg, n_frames=n_frames)
+
+
+def make_pdm(n_ticks, cfg, seed=3):
+    """A deterministic speech-like stimulus: sum of tones with an envelope."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(wwdata_len := 16000) / 16000.0
+    sig = np.zeros(wwdata_len, dtype=np.float32)
+    for f, a in [(220, .6), (700, .5), (1500, .35), (3000, .2)]:
+        sig += a * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28))
+    env = np.clip(np.sin(np.pi * t / t[-1]) ** 2, 0, 1)
+    sig = (sig * env).astype(np.float32)
+    sig /= max(abs(sig).max(), 1e-6)
+    sig *= 0.7
+    bits = []
+    for y in wwhw.pdm_encode_batch(sig[None, :], n_ticks, cfg):
+        bits.append(1 if y[0] > 0 else 0)
+    return bits
+
+
+PDM_DIV = wwhw.PDM_DIV          # clocks per mic tick (32)
+S_CLASS = 2                     # FSM state that runs the template
+
+
+class Bench:
+    def __init__(self, dut, cfg):
+        self.dut, self.cfg = dut, cfg
 
     async def reset(self):
         self.dut.ena.value = 1
-        self._idle()
+        self.dut.ui_in.value = 1 << 1        # trim = 1 -> below the 64 midpoint
+        self.dut.uio_in.value = 0
         self.dut.rst_n.value = 0
-        await ClockCycles(self.dut.clk, 5)
+        await ClockCycles(self.dut.clk, 8)
         self.dut.rst_n.value = 1
         await ClockCycles(self.dut.clk, 2)
 
-    async def send(self, byte: int, is_cmd: int):
-        self.dut.ui_in.value = byte & 0xFF
-        self.dut.uio_in.value = 0b01 | (0b10 if is_cmd else 0)
-        await RisingEdge(self.dut.clk)
-        self._idle()
-
-    async def send_stream(self, stream, gap: int = 0):
-        for byte, is_cmd in stream:
-            await self.send(byte, is_cmd)
-            if gap:
-                await ClockCycles(self.dut.clk, gap)
-
-    async def cmd(self, op: int, imm: int = 0):
-        await self.send(((op & 0xF) << 4) | (imm & 0xF), 1)
-
-    async def read_hidden(self, idx: int) -> int:
-        await self.cmd(hw.OP_RD_HIDDEN, idx)
-        await ClockCycles(self.dut.clk, 1)      # dbg_out is registered
-        v = int(self.dut.uo_out.value) & 0xF
-        await self.cmd(hw.OP_DBG_OFF)
-        return v
-
-    def result(self):
-        uo = int(self.dut.uo_out.value)
-        return dict(cls=uo & 0xF, valid=(uo >> 4) & 1,
-                    in_l2=(uo >> 5) & 1, ovf=(uo >> 6) & 1)
+    def set_bit(self, b, trim=1):
+        self.dut.ui_in.value = (b & 1) | ((trim & 0x7F) << 1)
 
 
-def get_weights(hidden: int = 16):
-    """Load artifacts/weights_$WTAG.json, else deterministic random weights."""
-    tag = os.environ.get("WTAG", f"w4_h{hidden}")
-    try:
-        m = hw.load_weights(tag)
-        assert m["hidden"] == hidden
-        return m
-    except Exception:
-        rng = np.random.default_rng(7)
-        return dict(
-            w1=rng.integers(hw.W_MIN, hw.W_MAX + 1, (hidden, hw.N_IN)).astype(np.int64),
-            b1=rng.integers(-2000, 2000, hidden).astype(np.int64),
-            w2=rng.integers(hw.W_MIN, hw.W_MAX + 1, (hw.N_CLASS, hidden)).astype(np.int64),
-            b2=rng.integers(-500, 500, hw.N_CLASS).astype(np.int64),
-            shift1=6, hidden=hidden, mode="random",
-        )
-
-
-def get_images(n: int):
-    try:
-        (_, _), (xte, yte) = hw.load_mnist_u4(hw.DEFAULT_DATA_DIR)
-        return xte[:n], yte[:n]
-    except Exception:
-        rng = np.random.default_rng(11)
-        return rng.integers(0, 16, (n, hw.N_IN)).astype(np.int32), np.full(n, -1)
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 @cocotb.test()
 async def test_reset(dut):
-    """After reset the chip is idle, in layer 1, with no valid result."""
-    cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
-    drv = Driver(dut)
-    await drv.reset()
-    r = drv.result()
-    assert r["valid"] == 0, "result_valid must be low after reset"
-    assert r["in_l2"] == 0, "must start in layer 1"
-    assert r["ovf"] == 0, "overflow flag must be clear"
-    assert int(dut.uio_oe.value) == 0b11111100, "uio[1:0] must be inputs"
+    """Reset clears the pipeline and the mic clock is running."""
+    cocotb.start_soon(Clock(dut.clk, 20, units="ns").start())
+    b = Bench(dut, test_cfg())
+    await b.reset()
+    assert (int(dut.uo_out.value) >> 1) & 0b111 == 0, "no detection may be asserted"
+    edges = 0
+    prev = int(dut.uo_out.value) & 1
+    for _ in range(4 * PDM_DIV):
+        await ClockCycles(dut.clk, 1)
+        cur = int(dut.uo_out.value) & 1
+        edges += cur != prev
+        prev = cur
+    assert edges >= 6, f"mic clock not toggling ({edges} edges)"
+    dut._log.info(f"mic clock: {edges} edges in {4*PDM_DIV} clk (expect ~8)")
 
 
 @cocotb.test()
-async def test_bias_load_and_requantize(dut):
-    """LOAD_ACC + NEURON_DONE exercises the 3-byte bias path and clamp(0,15)."""
-    cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
-    drv = Driver(dut)
-    await drv.reset()
+async def test_frontend_bit_exact(dut):
+    """Every frame's 8 band features must equal the golden model, exactly."""
+    cocotb.start_soon(Clock(dut.clk, 20, units="ns").start())
+    cfg = test_cfg()
+    b = Bench(dut, cfg)
+    await b.reset()
 
-    # shift1 = 0 makes hidden == clamp(acc, 0, 15), i.e. the bias itself.
-    cases = [(7, 7), (15, 15), (100, 15), (0, 0), (-1, 0), (-4096, 0)]
-    await drv.cmd(hw.OP_RESET)
-    await drv.cmd(hw.OP_SET_SHIFT, 0)
-    for i, (bias, _) in enumerate(cases):
-        await drv.cmd(hw.OP_LOAD_ACC)
-        for b in hw.bias_bytes(bias):
-            await drv.send(b, 0)
-        await drv.cmd(hw.OP_NEURON_DONE)
+    n_ticks = NFRAMES_RUN << cfg.frame_log2
+    bits = make_pdm(n_ticks, cfg)
+    golden = golden_frames(bits, cfg, NFRAMES_RUN)
 
-    for i, (bias, want) in enumerate(cases):
-        got = await drv.read_hidden(i)
-        assert got == want, f"bias {bias}: hidden[{i}] = {got}, expected {want}"
+    # Capture on the RTL's own frame boundary (entry to S_CLASS, before
+    # S_ROLL clears fmax) rather than guessing the cycle offset.
+    got, prev_st = [], 0
+    for tick_i in range(n_ticks):
+        if len(got) >= len(golden):
+            break
+        b.set_bit(bits[tick_i])
+        for _ in range(PDM_DIV):
+            await RisingEdge(dut.clk)
+            st = int(dut.user_project.st.value)
+            if st == S_CLASS and prev_st != S_CLASS:
+                got.append([int(dut.user_project.fmax[i].value)
+                            for i in range(cfg.nband)])
+            prev_st = st
 
-    # And with a shift: 1000 >> 4 = 62 -> saturates to 15; 200 >> 4 = 12.
-    await drv.cmd(hw.OP_RESET)
-    await drv.cmd(hw.OP_SET_SHIFT, 4)
-    for bias in (200, 1000):
-        await drv.cmd(hw.OP_LOAD_ACC)
-        for b in hw.bias_bytes(bias):
-            await drv.send(b, 0)
-        await drv.cmd(hw.OP_NEURON_DONE)
-    assert await drv.read_hidden(0) == 12
-    assert await drv.read_hidden(1) == 15
-
-
-@cocotb.test()
-async def test_mac_and_argmax(dut):
-    """Small hand-computed network: checks the signed 4x4 MAC and the argmax."""
-    cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
-    drv = Driver(dut)
-    await drv.reset()
-
-    await drv.cmd(hw.OP_RESET)
-    await drv.cmd(hw.OP_SET_SHIFT, 0)
-
-    # hidden[0] = 3*2 + 5*(-1) = 1     hidden[1] = 15*7 = 105 -> clamp 15
-    await drv.cmd(hw.OP_LOAD_ACC)
-    for b in hw.bias_bytes(0):
-        await drv.send(b, 0)
-    await drv.send((3 << 4) | (2 & 0xF), 0)
-    await drv.send((5 << 4) | (-1 & 0xF), 0)
-    await drv.cmd(hw.OP_NEURON_DONE)
-
-    await drv.cmd(hw.OP_LOAD_ACC)
-    for b in hw.bias_bytes(0):
-        await drv.send(b, 0)
-    await drv.send((15 << 4) | (7 & 0xF), 0)
-    await drv.cmd(hw.OP_NEURON_DONE)
-
-    assert await drv.read_hidden(0) == 1
-    assert await drv.read_hidden(1) == 15
-
-    # Layer 2: only the first two hidden units are non-zero, so
-    #   class 0: 1*1 + 15*1        = 16
-    #   class 1: 1*7 + 15*2        = 37   <- winner
-    #   class 2: bias 30, no weights = 30
-    #   classes 3..9: bias -100
-    await drv.cmd(hw.OP_START_L2)
-    await ClockCycles(dut.clk, 1)
-    assert drv.result()["in_l2"] == 1
-
-    async def do_class(bias, w):
-        await drv.cmd(hw.OP_LOAD_ACC)
-        for b in hw.bias_bytes(bias):
-            await drv.send(b, 0)
-        for i in range(16):
-            await drv.send((w[i] if i < len(w) else 0) & 0xF, 0)
-        await drv.cmd(hw.OP_CLASS_DONE)
-
-    await do_class(0, [1, 1])
-    await do_class(0, [7, 2])
-    await do_class(30, [])
-    for _ in range(7):
-        await do_class(-100, [])
-
-    await drv.cmd(hw.OP_FINISH)
-    await ClockCycles(dut.clk, 2)
-    r = drv.result()
-    assert r["valid"] == 1, "result_valid must be set by FINISH"
-    assert r["cls"] == 1, f"argmax should be class 1, got {r['cls']}"
-    assert r["ovf"] == 0, "no overflow expected"
+    n = min(len(got), len(golden))
+    assert n >= 4, f"only captured {n} frames"
+    bad = [(i, got[i], golden[i]) for i in range(n) if got[i] != golden[i]]
+    for i, g, e in bad[:5]:
+        dut._log.error(f"frame {i}: RTL {g} golden {e}")
+    assert not bad, f"{len(bad)}/{n} frames mismatched"
+    dut._log.info(f"{n} frames bit-exact; example {got[min(3, n-1)]}")
 
 
 @cocotb.test()
-async def test_mnist_images(dut):
-    """End-to-end: real weights + real MNIST images, RTL vs golden model."""
-    cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
-    drv = Driver(dut)
-    await drv.reset()
+async def test_detector_matches_model(dut):
+    """LED trace must match the golden Detector fed the golden features.
 
-    hidden = int(os.environ.get("HIDDEN", "16"))
-    n_img = int(os.environ.get("NUM_IMAGES", "3"))
-    m = get_weights(hidden)
-    xs, ys = get_images(n_img)
+    Independent of test_frontend_bit_exact: the model is driven from
+    wwhw.frontend_bits, not from whatever the RTL computed.
+    """
+    cocotb.start_soon(Clock(dut.clk, 20, units="ns").start())
+    cfg = test_cfg()
+    b = Bench(dut, cfg)
+    await b.reset()
 
-    n_correct = 0
-    for i in range(n_img):
-        x = xs[i]
-        stream = hw.build_stream(m["w1"], m["b1"], m["w2"], m["b2"], m["shift1"], x)
-        await drv.send_stream(stream)
-        await ClockCycles(dut.clk, 2)
+    W1, HB, W2, thr = load_weights()
+    trim = 1
+    det = wwhw.Detector(W1, HB, W2, thr + ((trim - 64) << 2), cfg,
+                        hacc_w=HACC_W, hshift=HSHIFT, feat_off=FEAT_OFF,
+                        refractory_frames=16)
 
-        exp_cls, exp_hidden, exp_scores = hw.infer_int(
-            m["w1"], m["b1"], m["w2"], m["b2"], m["shift1"], x)
+    n_ticks = NFRAMES_RUN << cfg.frame_log2
+    bits = make_pdm(n_ticks, cfg, seed=5)
+    golden = golden_frames(bits, cfg, NFRAMES_RUN)
 
-        r = drv.result()
-        assert r["valid"] == 1, f"image {i}: result_valid not set"
-        assert r["ovf"] == 0, f"image {i}: accumulator overflowed"
-
-        for h in range(hidden):
-            got = await drv.read_hidden(h)
-            assert got == int(exp_hidden[h]), (
-                f"image {i}: hidden[{h}] RTL={got} golden={int(exp_hidden[h])}")
-
-        assert r["cls"] == exp_cls, (
-            f"image {i}: RTL class {r['cls']} != golden {exp_cls} "
-            f"(scores {exp_scores.tolist()})")
-        n_correct += int(exp_cls == ys[i])
-        dut._log.info(
-            f"image {i}: label={ys[i]} pred={exp_cls} (RTL matches golden), "
-            f"{len(stream)} bytes")
-
-    dut._log.info(f"{n_correct}/{n_img} images classified correctly")
-
-
-@cocotb.test()
-async def test_stalled_stream(dut):
-    """The host may pause arbitrarily: idle cycles must not change state."""
-    cocotb.start_soon(Clock(dut.clk, CLK_NS, units="ns").start())
-    drv = Driver(dut)
-    await drv.reset()
-
-    m = get_weights(16)
-    xs, _ = get_images(1)
-    stream = hw.build_stream(m["w1"], m["b1"], m["w2"], m["b2"], m["shift1"], xs[0])
-
-    # Only stall inside the first neuron; a full gapped run would be slow.
-    await drv.send_stream(stream[:200], gap=2)
-    await drv.send_stream(stream[200:])
-    await ClockCycles(dut.clk, 2)
-
-    exp_cls, _, _ = hw.infer_int(m["w1"], m["b1"], m["w2"], m["b2"], m["shift1"], xs[0])
-    r = drv.result()
-    assert r["valid"] == 1 and r["cls"] == exp_cls, (
-        f"stalled stream gave class {r['cls']}, expected {exp_cls}")
+    mism, frames, prev_st, pending = 0, 0, 0, False
+    for tick_i in range(n_ticks):
+        b.set_bit(bits[tick_i], trim)
+        for _ in range(PDM_DIV):
+            await RisingEdge(dut.clk)
+            st = int(dut.user_project.st.value)
+            if st == S_CLASS and prev_st != S_CLASS and frames < len(golden):
+                det.push_frame(golden[frames])
+                frames += 1
+                pending = True
+            elif pending and st == 0:
+                rtl = (int(dut.uo_out.value) >> 1) & 1
+                exp = 1 if det.hold > 0 else 0
+                if rtl != exp:
+                    mism += 1
+                    if mism <= 3:
+                        dut._log.error(f"frame {frames}: LED rtl={rtl} model={exp}")
+                pending = False
+            prev_st = st
+    assert mism == 0, f"{mism}/{frames} frames disagreed on the LED"
+    dut._log.info(f"{frames} frames: LED matches the model, "
+                  f"{len(det.fired)} window(s) fired")
