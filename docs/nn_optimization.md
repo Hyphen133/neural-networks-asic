@@ -10,8 +10,9 @@ no number next to it has not been measured yet.
 
 ## 0. Where we start
 
-Both detectors are the same silicon (`src/tt_um_wakeword.sv`), differing only
-in the weight header. Shipped configuration:
+Both detectors started as the same silicon (`src/tt_um_wakeword.sv`), differing
+only in the weight header. Section 6 explains why they no longer do. Shipped
+configuration at the start of this work:
 
 | parameter | value |
 |---|---|
@@ -80,17 +81,19 @@ Cost on the GB10: 12 s per sheila run (250 epochs), 55–135 s per drone run.
 Session of 2026-09-04, 17:30–22:30 local. Stages, in the order the budget is
 spent, cheapest evidence first:
 
-| stage | what | cost class | status |
-|---|---|---|---|
-| A0 | shipped baseline, 6 seeds, as a reference distribution | — | **done** |
-| A1 | sheila coordinate sweep over 20 free dimensions, 4 seeds | free | running |
-| A2 | drone coordinate sweep, reduced, 3 seeds, 100-epoch screen | free | queued behind A1 |
-| B | front-end variants: `K_SHIFT`, `TAP0`, `NBAND`, `MANT`/`FEAT_W` | free to near-free | running |
-| C1 | near-free silicon constants: `NFRAME`, `WL` | near-free | running |
-| C2 | costly dims (`NHID`, `HACC_W`, `NPHASE`) measured only to size the gap | costly | running |
-| D | combination of the winners, cross sweep, 12 seeds | mixed | pending |
-| E | drone re-run on the winning front end | mixed | pending |
-| F | emit headers, `eval_header.py`, `area_check.sh`, commit | — | pending |
+| stage | what | outcome |
+|---|---|---|
+| A0/A1 | shipped baseline; sheila sweep over 20 free dimensions | nothing beat seed noise (§4.3) |
+| A2 | drone sweep over the same free dimensions | nothing beat seed noise; killed early |
+| B | eight front-end variants: `K_SHIFT`, `TAP0`, `NBAND`, `MANT`/`FEAT_W` | more bands wins (§4.1) |
+| C1 | near-free constants `NFRAME`, `WL` | **`NFRAME=8` is the big one** (§4.2) |
+| C2 | `NHID`, `HACC_W`, `NPHASE` measured only to size the gap | all FAIL area (§5) |
+| D/H | winners combined, free dimensions re-swept on the new base | `nb6` + `NFRAME=8` |
+| G | `FRAME_LOG2` — window length decoupled from ROM size | resolved the sheila/drone conflict (§4.5) |
+| E/I/J | drone on each fitting front end | every fitting change is worse (§6) |
+| F | emit, `eval_header.py`, `area_gate.py`, `harden_local.sh`, commit | done (§4.6, §4.7) |
+
+Roughly 180 configurations, each over 4–16 seeds, plus 45 area evaluations.
 
 The GPU sits at 8 % utilisation during a sweep — the per-frame accumulator
 loop is a Python loop over 16 `einsum` calls, so throughput is bound by kernel
