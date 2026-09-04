@@ -8,12 +8,12 @@
 `ifndef WW_FRAME_LOG2
   `define WW_FRAME_LOG2 16
 `endif
-`ifndef WW_NBAND
-  `define WW_NBAND 5
-`endif
-`ifndef WW_NHID
-  `define WW_NHID 4
-`endif
+// NBAND and NHID are deliberately NOT overridden here. They differ between the
+// two builds now (the WW_WEIGHTS_DRONE ifdef in tt_um_wakeword.sv), and pinning
+// them in the wrapper tests a design nobody is building. That is not
+// hypothetical: the wrapper held NBAND=5 while the RTL elaborated 6, so
+// read_fmax() indexed off the end of the array and both bit-exactness tests
+// failed against a design that was in fact correct.
 
 /* Testbench wrapper for tt_um_wakeword. */
 module tb ();
@@ -42,9 +42,7 @@ module tb ();
   tt_um_wakeword user_project (
 `else
   tt_um_wakeword #(
-      .FRAME_LOG2(`WW_FRAME_LOG2),
-      .NBAND     (`WW_NBAND),
-      .NHID      (`WW_NHID)
+      .FRAME_LOG2(`WW_FRAME_LOG2)
   ) user_project (
 `endif
       .ui_in  (ui_in),

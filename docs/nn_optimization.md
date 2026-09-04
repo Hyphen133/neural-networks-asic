@@ -430,3 +430,44 @@ levers not tried, in order of promise: `STATE_W` 10→9 frees roughly 650 µm² 
 flip-flops and was measured harmful for sheila (−2 to −7 AUC) but has never been
 measured for the drone, whose signal is narrowband and may not need the cascade
 precision; and a 1×2 tile makes the whole question disappear.
+
+---
+
+## 7. Verification status — one test still fails
+
+`harden_local.sh` signs the new sheila design off clean (§4.7), but the cocotb
+suite does **not** fully pass on it yet.
+
+| test | drone build (unchanged geometry) | sheila build (new geometry) |
+|---|---|---|
+| `test_reset` | PASS | PASS |
+| `test_frontend_bit_exact` | PASS | PASS |
+| `test_detector_matches_model` | PASS | **FAIL — 37/40 frames disagree on the LED** |
+
+One real bug was found and fixed on the way here. `test/tb.v` pinned
+`` `define WW_NBAND 5 `` and passed it as a parameter override, so the wrapper
+elaborated a five-band design no matter what the RTL said. `read_fmax()` then
+indexed off the end of `fmax[0:4]` and *both* bit-exactness tests failed against
+a design that was in fact correct. Nothing outside `tb.v` ever defined
+`WW_NBAND`, so the override could only ever contradict the RTL; it is gone, and
+the front-end test passes.
+
+The remaining failure is **not diagnosed**. What is known:
+
+- It is specific to the new geometry: the drone build, same RTL and same
+  testbench, passes 3/3.
+- The front end is bit-exact, so the features reaching the classifier are right;
+  the disagreement is in the classifier or in the LED/hold bookkeeping.
+- 37 of 40 frames disagreeing is systematic, not an edge case. At `trim=1` the
+  effective threshold is `thr - 252`, far below the score range, so both RTL and
+  model should assert the LED on nearly every frame — one of them does not.
+- `NFRAME=8` is the prime suspect, being the parameter the passing drone build
+  does not share. Bit-width derivations were checked by hand and look sound
+  (`FIDX_W=3`, `wsel` ≤ 31 into a 384-bit `WW_ROW`, `CNT_W=11`), so the fault is
+  more likely in window/hold timing than in a truncation.
+
+**Until this is resolved the new sheila design must not be taped out**, however
+good its AUC and however clean its harden. The accuracy result (§4.6) stands on
+its own — it is measured on cached features through the bit-exact software model
+and confirmed by `eval_header.py` — but "the RTL implements that model" is
+currently unproven for `NFRAME=8`.
