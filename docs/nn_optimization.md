@@ -389,6 +389,7 @@ decision. Measured on DADS, four seeds each, validation AUC:
 | *shipped `NBAND=5, TAP0=4`, `NFRAME=16`* | *93.63 ± 0.41* | ✓ |
 | `NBAND=6, TAP0=3`, `FRAME_LOG2=17`, `NFRAME=8` | 92.70 ± 0.32 | ✓ |
 | `NBAND=6, TAP0=3`, `NFRAME=8` | 91.63 ± 1.08 | ✓ |
+| `NBAND=5, TAP0=4`, `FRAME_LOG2=17`, `NFRAME=8` | 91.82 ± 0.69 | ✓ |
 | `TAP0=3, NBAND=5`, `NFRAME=16` | 89.25 ± 0.48 | ✓ |
 
 **Every change that fits makes the drone worse, and the only change that helps
@@ -415,6 +416,12 @@ its window (four lengths), three frame lengths and twenty training dimensions,
 and nothing both helped and fitted. The one configuration that would help is
 318 µm² over budget, and neither `DEBUG_PINS=0` (22 583 µm²) nor `SCORE_W=9`
 (22 515 µm²) pays that back — both make it worse.
+
+A 1 342 ms window (`FRAME_LOG2=17` at `NFRAME=16`) would test the
+"longest window wins" reading directly and it fits at 21 478 µm², but it is
+**untestable on this data**: at 83.9 ms per frame a one-second clip holds only
+twelve frames, so a sixteen-frame window exceeds the clip. Measuring it needs
+negative segments longer than the DADS pipeline cuts.
 
 ### What would unblock it
 
