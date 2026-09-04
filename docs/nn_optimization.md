@@ -312,20 +312,49 @@ python train/optim/finalise.py --tag sheila_nb6 --name sheila \
 
 | | shipped | new |
 |---|---:|---:|
-| validation AUC | 87.55 ± 0.41 | **91.65 ± 0.24** |
+| validation AUC (16 seeds) | 87.55 ± 0.41 | **91.65 ± 0.24** |
 | test AUC (val-selected seed) | 89.14 % | **93.67 %** |
 | test AUC (mean over seeds) | — | 93.64 % |
-| synthesised area | 21 238 µm² | **21 113 µm²** |
-| flip-flops | 205 | **205** |
-| estimated core utilisation | 95.9 % | **95.3 %** |
+| synthesised area | 21 238 µm² | 21 407 µm² |
 
-**+4.5 AUC points and 125 µm² smaller, at the same flop count.** The seed
-spread also halves, which matters more than it looks: the shipped model was
-picked from a distribution wide enough that seed choice was worth ~1 point.
+**+4.5 AUC points.** The seed spread also halves, which matters more than it
+looks: the shipped model came from a distribution wide enough that the choice of
+seed was worth about a point on its own.
 
 The export is exact — `eval_header.py` re-scores the emitted header through the
 independent integer chip model and gets 93.67 %, the same number training
-reported, so the header is the model and not an approximation of it.
+reported, so the header is the model rather than an approximation of it.
+
+### 4.7 The harden, which is the number that counts
+
+Synthesised area is an estimate. `harden_local.sh` was run end to end on the new
+design (`runs/sheila_nb6`), and it is the flow, not the estimate, that decides
+whether something fits:
+
+| | shipped `runs/wokwi6` | drone `runs/drone` | **new `runs/sheila_nb6`** |
+|---|---:|---:|---:|
+| core utilisation | 95.88 % | 94.55 % | **95.55 %** |
+| standard-cell area | 27 749 µm² | 27 365 µm² | **27 653 µm²** |
+| magic / routing DRC | 0 / 0 | 0 / 0 | **0 / 0** |
+| LVS errors | 0 | 0 | **0** |
+| setup, hold WNS/TNS | met | met | **0 / 0, all corners** |
+| antenna violations | 0 | 0 | **0** |
+| max-fanout violations | 14 | 15 | 15 |
+
+It fits, and signs off clean at slightly *lower* utilisation than the design it
+replaces. The 15 fanout violations are the same pre-existing condition the
+shipped drone build already has, not a regression.
+
+> A correction worth recording, because it nearly went the other way: an
+> intermediate figure of 21 113 µm² for this design was wrong. `area_gate.py`
+> passes its whole `DEFAULTS` dictionary through `chparam`, which **overrides
+> the new per-build ifdef** — so that run synthesised the old 5-band geometry
+> against a 6-band header, read past the end of a 384-bit constant, and reported
+> an area for a design that cannot exist. That is precisely the failure mode the
+> gate was written to catch, reintroduced through its own parameter defaults.
+> The honest synthesised figure is 21 407 µm², measured with
+> `--set NBAND=6 --set TAP0=3 --set NFRAME=8`; the flow figures above are what
+> actually settle it.
 
 ---
 
@@ -343,3 +372,51 @@ reported, so the header is the model and not an approximation of it.
 | `K_SHIFT=1` | accuracy | −8.6 AUC |
 | int3 / int4 weights | accuracy (and new RTL) | −1.4 / −7.6 AUC |
 | `train_hop=1/2` | accuracy | −9.4 / −7.9 AUC |
+
+---
+
+## 6. The drone: why it does not move
+
+The two detectors share one RTL source, so every geometry change is a joint
+decision. Measured on DADS, four seeds each, validation AUC:
+
+| front end / window | drone val | fits? |
+|---|---:|---|
+| `NBAND=6, TAP0=3`, `NFRAME=16` | **94.54 ± 0.78** | ✗ 22 468 µm², 101.4 % core |
+| *shipped `NBAND=5, TAP0=4`, `NFRAME=16`* | *93.63 ± 0.41* | ✓ |
+| `NBAND=6, TAP0=3`, `FRAME_LOG2=17`, `NFRAME=8` | 92.70 ± 0.32 | ✓ |
+| `NBAND=6, TAP0=3`, `NFRAME=8` | 91.63 ± 1.08 | ✓ |
+| `TAP0=3, NBAND=5`, `NFRAME=16` | 89.25 ± 0.48 | ✓ |
+
+**Every change that fits makes the drone worse, and the only change that helps
+does not fit.** Two mechanisms, both physical:
+
+- `TAP0=3` moves the band set up by one octave. Sheila gains from that (speech
+  energy at 7.8–15.5 kHz); the drone loses 4.4 points, because the band it drops
+  at the bottom is where rotor hum lives. Adding a band (`NBAND=6`) helps the
+  drone precisely because it keeps the low one *and* adds the high one — which
+  is also why it is the configuration that does not fit.
+- Shortening the window costs the drone 2.0 points, and lengthening the frame to
+  83.9 ms to compensate costs 0.9. A drone is a steady tone: evidence integrates
+  over time, so the longest window with the finest frames wins. A wake word is
+  an event, and the opposite is true.
+
+So sheila's geometry is not imposed on the drone. `TAP0`, `NBAND`, `NFRAME` and
+`FRAME_LOG2` sit under the `WW_WEIGHTS_DRONE` ifdef that already selects the
+header, each build takes the shape its data wants, and both fit on their own —
+21 407 µm² and 21 238 µm² synthesised.
+
+**The drone therefore ships unchanged at 95.27 % test AUC.** That is an honest
+null result, not an oversight: the search covered its front end (five band sets),
+its window (four lengths), three frame lengths and twenty training dimensions,
+and nothing both helped and fitted. The one configuration that would help is
+318 µm² over budget, and neither `DEBUG_PINS=0` (22 583 µm²) nor `SCORE_W=9`
+(22 515 µm²) pays that back — both make it worse.
+
+### What would unblock it
+
+`NBAND=6` at `NFRAME=16` needs 318 µm² that the 1×1 tile does not have. The
+levers not tried, in order of promise: `STATE_W` 10→9 frees roughly 650 µm² of
+flip-flops and was measured harmful for sheila (−2 to −7 AUC) but has never been
+measured for the drone, whose signal is narrowband and may not need the cascade
+precision; and a 1×2 tile makes the whole question disappear.

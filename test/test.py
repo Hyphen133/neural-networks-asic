@@ -32,14 +32,18 @@ NFRAMES_RUN = int(os.environ.get("NFRAMES",
                                  "40" if FRAME_LOG2 <= 10 else ("5" if GATES else "8")))
 
 
+DRONE = os.environ.get("WEIGHTS") == "drone"
+
+
 def test_cfg():
-    # Matches the shipped RTL parameters; only the frame length is shortened.
-    # nband/tap0/nframe must track src/tt_um_wakeword.sv: load_weights() slices
-    # WW_ROW at a 2*nband stride, so a stale nband here silently mis-decodes
-    # every weight instead of failing.
-    return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=6, tap0=3,
-                         state_w=10, mant=1, feat_w=4, nframe=8, nphase=NPHASE,
-                         score_w=10)
+    # Matches the RTL parameters of the selected build; only the frame length is
+    # shortened. nband/tap0/nframe must track the ifdef in
+    # src/tt_um_wakeword.sv -- load_weights() slices WW_ROW at a 2*nband stride,
+    # so a stale nband mis-decodes every weight silently instead of failing.
+    nband, tap0, nframe = (5, 4, 16) if DRONE else (6, 3, 8)
+    return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=nband, tap0=tap0,
+                         state_w=10, mant=1, feat_w=4, nframe=nframe,
+                         nphase=NPHASE, score_w=10)
 
 
 # ---------------------------------------------------------------------------

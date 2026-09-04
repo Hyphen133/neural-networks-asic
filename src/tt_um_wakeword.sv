@@ -35,23 +35,31 @@ module tt_um_wakeword #(
     parameter NSTAGE       = 9,    // cascade depth
     parameter K_SHIFT      = 2,     // 1-pole coefficient
     parameter STATE_W      = 10,    // signed cascade state
-    parameter TAP0         = 3,     // first stage used as a band
+    // Band set and window geometry, per build. The two detectors listen for
+    // opposite things, and measurement says so rather than intuition: a wake
+    // word is a short event, best caught by a 335 ms window slid across the
+    // clip, and it gains 1.5 AUC from a 7.8-15.5 kHz band. A drone is a steady
+    // tone that wants the longest window it can get, and TAP0=3 *costs* it
+    // 4.4 AUC because the band it drops is the low one, where rotor hum lives.
+    //
+    // Each geometry fits the tile on its own -- 21 113 and 21 372 um^2
+    // synthesised against a 22 150 um^2 budget (train/optim/area_gate.py) --
+    // but their union does not: NBAND=6 at NFRAME=16 needs 22 468 um^2, 101.4 %
+    // of the core, and neither DEBUG_PINS=0 nor SCORE_W=9 buys that back. So
+    // the two builds differ here instead of one settling for the other's shape.
+`ifdef WW_WEIGHTS_DRONE
+    parameter TAP0         = 4,     // stages 3..8, keeping the lowest band
+    parameter NBAND        = 5,
+    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms
+    parameter NFRAME       = 16,    // 671 ms of integration under one window
+`else
+    parameter TAP0         = 3,     // stages 2..8, adding 7.8-15.5 kHz
     parameter NBAND        = 6,
+    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
+    parameter NFRAME       = 8,     // 335 ms, hop 168 ms, five positions
+`endif
     parameter MANT         = 1,     // mantissa bits in the log -> 3 dB steps
     parameter FEAT_W       = 4,
-    // The only parameter that differs between the two builds. Both cover
-    // roughly the same span of audio; the wake word wants it resolved finely
-    // and slid across the clip (8 x 41.9 ms = 335 ms, hop 168 ms), the drone
-    // wants the whole 671 ms under one window because its evidence is a steady
-    // tone rather than an event. Eight frames either way, so the weight ROM is
-    // the same size and both builds fit: 21 407 and 21 759 um^2 synthesised
-    // (train/optim/area_gate.py), against a 22 150 um^2 budget.
-`ifdef WW_WEIGHTS_DRONE
-    parameter FRAME_LOG2   = 17,    // 131_072 mic ticks = 83.9 ms
-`else
-    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
-`endif
-    parameter NFRAME       = 8,
     parameter NPHASE       = 2,     // staggered windows, hop = NFRAME/NPHASE
     parameter NHID         = 4,     // hidden units; 1 == the old linear template
     parameter HACC_W       = 6,     // saturating hidden accumulator
