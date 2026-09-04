@@ -35,12 +35,23 @@ module tt_um_wakeword #(
     parameter NSTAGE       = 9,    // cascade depth
     parameter K_SHIFT      = 2,     // 1-pole coefficient
     parameter STATE_W      = 10,    // signed cascade state
-    parameter TAP0         = 4,     // first stage used as a band
-    parameter NBAND        = 5,
+    parameter TAP0         = 3,     // first stage used as a band
+    parameter NBAND        = 6,
     parameter MANT         = 1,     // mantissa bits in the log -> 3 dB steps
     parameter FEAT_W       = 4,
+    // The only parameter that differs between the two builds. Both cover
+    // roughly the same span of audio; the wake word wants it resolved finely
+    // and slid across the clip (8 x 41.9 ms = 335 ms, hop 168 ms), the drone
+    // wants the whole 671 ms under one window because its evidence is a steady
+    // tone rather than an event. Eight frames either way, so the weight ROM is
+    // the same size and both builds fit: 21 407 and 21 759 um^2 synthesised
+    // (train/optim/area_gate.py), against a 22 150 um^2 budget.
+`ifdef WW_WEIGHTS_DRONE
+    parameter FRAME_LOG2   = 17,    // 131_072 mic ticks = 83.9 ms
+`else
     parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
-    parameter NFRAME       = 16,
+`endif
+    parameter NFRAME       = 8,
     parameter NPHASE       = 2,     // staggered windows, hop = NFRAME/NPHASE
     parameter NHID         = 4,     // hidden units; 1 == the old linear template
     parameter HACC_W       = 6,     // saturating hidden accumulator

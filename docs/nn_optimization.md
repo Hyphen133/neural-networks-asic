@@ -261,6 +261,74 @@ see.
 
 ---
 
+### 4.4 Window length is the biggest lever, and the two targets disagree
+
+`NFRAME` sets how much audio one score sees. Sweeping it turned out to matter
+more than anything else, and to pull the two detectors in opposite directions:
+
+| `NFRAME` (at `FRAME_LOG2=16`) | window | sheila val | drone val |
+|---:|---:|---:|---:|
+| 8 | 335 ms, hop 168 ms | **90.08** | 91.28 |
+| 16 (shipped) | 671 ms, hop 336 ms | 87.55 | **93.45** |
+
+A wake word is a short event: a 335 ms window slid across the clip in five
+positions finds the discriminative part of "sheila" instead of averaging the
+whole utterance. A drone is a steady tone: the longer the window, the more
+evidence integrates, and slicing it up only adds noise.
+
+That is a genuine conflict, because `NFRAME` is an RTL parameter — it sizes the
+weight ROM — not a header constant, so the two builds cannot simply differ in
+it for free.
+
+### 4.5 The resolution: `FRAME_LOG2`
+
+`FRAME_LOG2` sets how long a frame *is*, and it costs nothing — one bit of
+counter. So window length and ROM size, which `NFRAME` welds together, can be
+separated:
+
+| build | `NFRAME` | `FRAME_LOG2` | frame | window | ROM rows |
+|---|---:|---:|---:|---:|---:|
+| sheila | 8 | 16 | 41.9 ms | 335 ms sliding | 8 |
+| drone | 8 | 17 | 83.9 ms | 671 ms | 8 |
+
+Both get the window they want, both use eight frames, so both weight ROMs are
+the same size and both fit. `FRAME_LOG2` is the single parameter that differs
+between the two builds, and it sits under the `WW_WEIGHTS_DRONE` ifdef that
+already selects the header.
+
+This mattered because the configuration that would have suited both —
+`NBAND=6` at `NFRAME=16` — scores well on both (sheila 89.02, drone 94.54) and
+**does not fit**: 22 468 µm², 101.4 % core. Neither `DEBUG_PINS=0` (22 583) nor
+`SCORE_W=9` (22 515) pays the 318 µm² it is over by; both make it worse.
+
+### 4.6 Sheila, final
+
+```
+python train/optim/finalise.py --tag sheila_nb6 --name sheila \
+    --set nframe=8 --set epochs=1000 --seeds 16 --out src/ww_weights.svh
+```
+
+16 seeds, seed picked on validation only:
+
+| | shipped | new |
+|---|---:|---:|
+| validation AUC | 87.55 ± 0.41 | **91.65 ± 0.24** |
+| test AUC (val-selected seed) | 89.14 % | **93.67 %** |
+| test AUC (mean over seeds) | — | 93.64 % |
+| synthesised area | 21 238 µm² | **21 113 µm²** |
+| flip-flops | 205 | **205** |
+| estimated core utilisation | 95.9 % | **95.3 %** |
+
+**+4.5 AUC points and 125 µm² smaller, at the same flop count.** The seed
+spread also halves, which matters more than it looks: the shipped model was
+picked from a distribution wide enough that seed choice was worth ~1 point.
+
+The export is exact — `eval_header.py` re-scores the emitted header through the
+independent integer chip model and gets 93.67 %, the same number training
+reported, so the header is the model and not an approximation of it.
+
+---
+
 ## 5. Rejected
 
 | candidate | rejected by | number |

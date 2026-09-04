@@ -34,8 +34,11 @@ NFRAMES_RUN = int(os.environ.get("NFRAMES",
 
 def test_cfg():
     # Matches the shipped RTL parameters; only the frame length is shortened.
-    return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=5, tap0=4,
-                         state_w=10, mant=1, feat_w=4, nphase=NPHASE,
+    # nband/tap0/nframe must track src/tt_um_wakeword.sv: load_weights() slices
+    # WW_ROW at a 2*nband stride, so a stale nband here silently mis-decodes
+    # every weight instead of failing.
+    return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=6, tap0=3,
+                         state_w=10, mant=1, feat_w=4, nframe=8, nphase=NPHASE,
                          score_w=10)
 
 

@@ -56,7 +56,7 @@ DENSITY = 0.74            # shipped hidden template: 237/320 non-zero
 IMAGE = os.environ.get("LIBRELANE_IMAGE", "ghcr.io/librelane/librelane:3.0.6")
 DEFAULTS = dict(NSTAGE=9, K_SHIFT=2, STATE_W=10, TAP0=4, NBAND=5, MANT=1,
                 FEAT_W=4, FRAME_LOG2=16, NFRAME=16, NPHASE=2, NHID=4, HACC_W=6,
-                HSHIFT=1, FEAT_OFF=6, SCORE_W=10)
+                HSHIFT=1, FEAT_OFF=6, SCORE_W=10, DEBUG_PINS=1)
 
 
 def synth_header(p: dict, seed: int = 0) -> str:
