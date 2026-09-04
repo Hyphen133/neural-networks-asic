@@ -168,15 +168,36 @@ def main():
                     help="lower end of the log-uniform level augmentation (0.25 = -12 dB)")
     ap.add_argument("--silence", type=int, default=2000,
                     help="synthetic room-tone negatives")
-    ap.add_argument("--frames", type=int, default=NFRAME_EXT)
+    ap.add_argument("--frames", type=int, default=0,
+                    help=f"0 = {NFRAME_EXT} at the default frame length, scaled "
+                         "to cover the same 1 s at any other --frame-log2")
     ap.add_argument("--batch", type=int, default=1024)
     ap.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2))
     ap.add_argument("--limit", type=int, default=0, help="debug: only this many clips")
     ap.add_argument("--redecode", action="store_true", help="ignore the clip cache")
+    ap.add_argument("--cache-tag", default="",
+                    help="reuse another tag's decoded clip cache. Decoding is the "
+                         "6.8 GB parquet pass and does not depend on the front end, "
+                         "so a second front end should never repeat it.")
+    # Front-end overrides. Defaults are SHIPPED, so the command in docs/DRONE.md
+    # still produces exactly the shipped feature set.
+    for k in ("nstage", "nband", "tap0", "state_w", "mant", "feat_w", "k_shift",
+              "frame_log2"):
+        ap.add_argument(f"--{k.replace('_', '-')}", dest=k, type=int,
+                        default=SHIPPED.get(k, getattr(wwhw, k.upper())))
     args = ap.parse_args()
 
-    cfg = wwhw.HWConfig(**SHIPPED)
-    cache_prefix = os.path.join(CACHE, f"cache_{args.tag}")
+    cfg = wwhw.HWConfig(**{**SHIPPED,
+                           **{k: getattr(args, k) for k in
+                              ("nstage", "nband", "tap0", "state_w", "mant",
+                               "feat_w", "k_shift", "frame_log2")}})
+    # A frame is 2^FRAME_LOG2 mic ticks, so halving the frame length doubles the
+    # frames a clip holds; scaling from NFRAME_EXT keeps the span at 1 s.
+    if not args.frames:
+        args.frames = NFRAME_EXT << (wwhw.FRAME_LOG2 - cfg.frame_log2) \
+            if cfg.frame_log2 <= wwhw.FRAME_LOG2 \
+            else NFRAME_EXT >> (cfg.frame_log2 - wwhw.FRAME_LOG2)
+    cache_prefix = os.path.join(CACHE, f"cache_{args.cache_tag or args.tag}")
     if args.redecode or not os.path.exists(cache_prefix + "_meta.npz"):
         decode_all(args, cache_prefix)
     meta = np.load(cache_prefix + "_meta.npz")

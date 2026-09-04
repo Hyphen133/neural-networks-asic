@@ -121,11 +121,20 @@ def main():
                     help="rewrite WW_THRESH_PK so that this fraction of *validation* "
                          "non-drone clips fires (drone-detector operating point; the "
                          "wake-word FA/hour rule in train_sheila.py is far too strict here)")
+    ap.add_argument("--nframe", type=int, default=0,
+                    help="0 = the extraction's NFRAME. Set it when the header was "
+                         "emitted for a different window length than the features "
+                         "were cached with, or WW_ROW is sliced at the wrong stride.")
+    ap.add_argument("--nphase", type=int, default=0, help="0 = the extraction's NPHASE")
     args = ap.parse_args()
 
     d = np.load(os.path.join(ART, f"ww_feats_{args.tag}.npz"), allow_pickle=True)
     feats, labels, splits = d["feats"], d["labels"], d["splits"]
     cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
+    if args.nframe:
+        cfg.nframe = args.nframe
+    if args.nphase:
+        cfg.nphase = args.nphase
     W1, HB, W2, thr, hacc_w = parse_header(args.header, cfg.nframe, cfg.nband)
     nz = int((W1 != 0).sum())
     print(f"header {os.path.relpath(args.header)}: H={W1.shape[0]} {hacc_w}-bit accumulator, "

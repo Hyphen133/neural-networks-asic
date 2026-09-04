@@ -38,18 +38,28 @@ def main():
     ap.add_argument("--neg-per-word", type=int, default=180)
     ap.add_argument("--aug", type=int, default=3, help="jittered copies of each positive")
     ap.add_argument("--batch", type=int, default=1024)
-    ap.add_argument("--frames", type=int, default=NFRAME_EXT)
+    ap.add_argument("--frames", type=int, default=0,
+                    help=f"0 = {NFRAME_EXT} at the default frame length, scaled "
+                         "to cover the same 1 s at any other --frame-log2")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--limit", type=int, default=0)
     for k, dv in [("nstage", wwhw.NSTAGE), ("nband", wwhw.NBAND), ("tap0", wwhw.TAP0),
                   ("state-w", wwhw.STATE_W), ("mant", wwhw.MANT),
-                  ("feat-w", wwhw.FEAT_W), ("k-shift", wwhw.K_SHIFT)]:
+                  ("feat-w", wwhw.FEAT_W), ("k-shift", wwhw.K_SHIFT),
+                  ("frame-log2", wwhw.FRAME_LOG2)]:
         ap.add_argument(f"--{k}", type=int, default=dv)
     args = ap.parse_args()
 
     cfg = wwhw.HWConfig(nstage=args.nstage, nband=args.nband, tap0=args.tap0,
                         state_w=args.state_w, mant=args.mant, feat_w=args.feat_w,
-                        k_shift=args.k_shift)
+                        k_shift=args.k_shift, frame_log2=args.frame_log2)
+    # A frame is 2^FRAME_LOG2 mic ticks, so halving the frame length doubles the
+    # frames a clip holds. Scaling from NFRAME_EXT keeps the span of audio the
+    # same and keeps the shipped FRAME_LOG2=16 extraction at exactly 24 frames.
+    if not args.frames:
+        args.frames = NFRAME_EXT << (wwhw.FRAME_LOG2 - cfg.frame_log2) \
+            if cfg.frame_log2 <= wwhw.FRAME_LOG2 \
+            else NFRAME_EXT >> (cfg.frame_log2 - wwhw.FRAME_LOG2)
 
     tag = args.tag or "_".join(args.targets)
     items = wwdata.index(args.targets, n_neg_per_word=args.neg_per_word)
