@@ -48,15 +48,25 @@ COMMON = dict(TAP0=3, NBAND=6, NSTAGE=9, STATE_W=9, AVG_SHIFT=6)
 
 
 def best_per_task() -> dict[str, dict]:
-    rows: dict[str, dict] = {}
+    """Pick each task's design by mean validation AUC.
+
+    Two round-22 processes can race and write the same (task, design) twice --
+    same seeds, so near-identical numbers. Keeping only the first occurrence
+    stops the selection from taking the luckier of two runs of one config,
+    which would bias the winner's reported numbers upward.
+    """
+    seen: dict[tuple[str, str], dict] = {}
     with open(R22) as f:
         for line in f:
             if not line.strip():
                 continue
             r = json.loads(line)
-            cur = rows.get(r["task"])
-            if cur is None or r["val_mean"] > cur["val_mean"]:
-                rows[r["task"]] = r
+            seen.setdefault((r["task"], r["design"]), r)
+    rows: dict[str, dict] = {}
+    for r in seen.values():
+        cur = rows.get(r["task"])
+        if cur is None or r["val_mean"] > cur["val_mean"]:
+            rows[r["task"]] = r
     return rows
 
 
