@@ -132,7 +132,51 @@ shift and not mixture.
 But it means part of every reported validation number is a mixture artefact,
 and it is the part that is straightforwardly fixable: scale the silence count
 per split instead of hash-splitting a fixed 2 000, or report validation AUC
-with the synthetic negatives excluded. Not yet done.
+with the synthetic negatives excluded.
+
+### Measured
+
+AUC decomposes exactly over a partition of the negative class, since it is a
+Mann-Whitney statistic and the positives are shared:
+
+    AUC = f * AUC_silence + (1 - f) * AUC_real
+
+Setting `AUC_silence = 1.0` predicts what the real-audio AUC must be. `qat.py`
+now measures it directly as `val_nosil` / `test_nosil`, and the two agree to
+within seed noise -- mosquito's validation was predicted at 84.63 and measured
+at 84.65 -- so the synthetic negatives are indeed almost perfectly separable
+and the arithmetic can be trusted.
+
+Two seeds, `epochs=1000`, `pdm_gain=2.0`:
+
+| task | val | val real | test | test real | gap | gap real |
+|---|---|---|---|---|---|---|
+| mosquito | 87.75 | 84.65 | 63.73 | **47.35** | +24.02 | **+37.30** |
+| catmeow | 94.36 | **82.62** | 85.76 | 78.57 | +8.60 | +4.05 |
+| water | 80.45 | **70.40** | 70.68 | 67.81 | +9.77 | +2.59 |
+
+Three things follow.
+
+**The mosquito detector does not transfer.** Its real-audio test AUC is 47.35,
+below chance. The reported ~64 is carried entirely by the synthetic negatives;
+against real audio from an unseen site the detector has no discriminative
+power at all. This is the same conclusion section 2 reached from the split
+construction, now measured rather than inferred, and it is not something any
+free knob can repair.
+
+**Reported validation is inflated wherever silence is a large share.**
+Catmeow's headline 94.35 is 82.62 on real audio -- 11.7 points of it is "cat
+versus silence" -- and water's 80.45 is 70.40. These are the numbers that have
+been driving selection and filling every summary table.
+
+**Most of catmeow's and water's gap was never real.** 8.60 becomes 4.05 and
+9.77 becomes 2.59. Those two generalise considerably better than the headline
+suggested; only mosquito gets worse under an honest accounting.
+
+`best_epoch` from the same runs: 572 (mosquito), 440 (catmeow), 150 (water) out
+of 1 000. The winning checkpoint arrives early -- water uses 15 % of its budget
+-- which is independent confirmation that the later epochs add nothing and that
+best-checkpoint restore is already doing what early stopping would.
 
 ## 4. Does validation still *rank* correctly?
 
