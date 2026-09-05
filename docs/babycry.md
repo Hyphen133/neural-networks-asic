@@ -1,6 +1,8 @@
 # Can `babycry` reach 90 %?
 
-`babycry` detects "an infant is crying nearby" on the TinyTapeout 1×1 chip. It
+`babycry` detects "an infant is crying nearby" on the TinyTapeout 1×1 chip -- a
+cry against almost any other sound, the confusable human vocalisations having
+been excluded from the data rather than used as negatives (see below). It
 sits at **78.54 % test AUC** after the search in
 [task_optimization.md](task_optimization.md). This asks what it would take to
 reach 90 %, and answers it.
@@ -91,24 +93,48 @@ detection. This was worth checking and the suspicion was wrong.
 One incidental finding: `donateacry` cries are the *harder* ones. Dropping them
 raises the AUC to 81.25.
 
+## What the task actually asks
+
+The second set in each `tasks.py` entry is the **ambiguous** set, not the
+negatives — `_top_up` calls `fsd50k.negatives(p, a, want)` with `p, a =
+FSD[task]`, and `split_rows` documents its return as *"(positives, usable
+negatives) — ambiguous rows belong to neither"*. So:
+
+| role | FSD50K | ESC-50 |
+|---|---|---|
+| **positive** | `Crying_and_sobbing` | `crying_baby` |
+| **excluded entirely** | `Screaming, Yell, Shout, Child_speech_and_kid_speaking, Laughter, Giggle, Chuckle_and_chortle, Human_voice, Sigh, Gasp, Whispering, Chatter, Crowd, Cheering, Human_group_actions` | `laughing, sneezing, coughing, breathing, snoring` |
+| **negative** | the rest of the corpus, a **44 457-clip pool** over ~180 classes | the other 44 classes, 1 760 clips |
+
+The arithmetic confirms it: ESC-50 is 2 000 clips, 40 positive, 5 × 40
+ambiguous, and the reported pool is 1 760 = 2000 − 40 − 200.
+
+**`babycry` is therefore "cry vs almost anything"** — dogs, engines, doors,
+music, water, rain — with the confusable human vocalisations *removed from the
+dataset* rather than used as hard negatives. That is the easier of the two
+framings, and it is already the one in use.
+
+An earlier revision of this document said the opposite: that the negatives were
+the human-vocalisation set, that the task was deliberately adversarial, and
+that widening the negatives was the only route to 90 %. All three were wrong.
+There is no easier framing left to adopt, and dropping the ambiguous exclusion
+would make the task **harder**, not easier.
+
 ## What would actually be needed
 
-The question `babycry` asks is harder than it looks. Its negatives are not
-"any other sound" — they are `Screaming, Yell, Shout, Child_speech, Laughter,
-Giggle, Human_voice, Sigh, Gasp, Whispering, Chatter, Crowd, Cheering` plus
-ESC-50's `laughing, sneezing, coughing, breathing, snoring`. It is
-**infant cry against other human vocalisation**, deliberately adversarial, and
-that is the right question for a detector meant to sit in a room with people.
-
-Separating those two classes through six octave-wide bands at 3 dB resolution,
-42 ms frames and a 335 ms window is close to what the representation supports.
-An unconstrained float model with 60× the parameters gets 80.98.
+The limit is the front end, and now it is the front end without an excuse.
+Six octave-wide bands at 3 dB resolution, 42 ms frames and a 335 ms window
+cannot separate an infant cry from general audio better than **80.98 %**, and
+that is measured with an unconstrained float model 60× the size. The chip gets
+78.54 of the available 80.98.
 
 There is also irreducible label noise: FSD50K's vocabulary has exactly one
 relevant label, `Crying_and_sobbing`, with no separate infant class, so 42 of
 the 164 positive test recordings are "crying and sobbing" that may be adult.
 
-**90 % is reachable only by changing the question** — widening the negatives
-from "other human vocalisation" to "anything at all". That would raise the
-number substantially and would not make the detector better; it would make it
-answer an easier question. Recorded here as an option, not taken.
+Reaching 90 % needs a representation that resolves what a cry actually is: a
+pitched, strongly modulated voice with a 300–600 Hz fundamental and a
+characteristic rise-fall melody. Octave-wide bands smear the fundamental and
+its harmonics into the same bin; a per-frame maximum over 42 ms discards the
+melody. Neither is fixable inside 22 150 µm² — `NBAND=7` alone is 1 620 µm²
+over budget.
