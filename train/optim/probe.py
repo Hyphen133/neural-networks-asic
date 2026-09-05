@@ -84,16 +84,75 @@ def train_one(Xf, Y, tr_idx, va, te, labels, hidden, depth, epochs, seed, dev,
     return best
 
 
-def load(tag: str, nframe: int, dev):
+def level_norm(X: np.ndarray, mode: str, shift: int) -> np.ndarray:
+    """Per-band adaptive level tracking. X: (N, T, NB) float.
+
+    The chip subtracts one *constant* (``FEAT_OFF``) from every band of every
+    frame, so a detector trained at one input level degrades at another --
+    ``docs/robustness.md`` measures sheila losing 19.8 % -> 3.1 % recall over a
+    3 dB drop. Every mode here replaces that constant with a level the design
+    tracks for itself:
+
+    ``ema``   causal leaky integrator per band, ``m += (x - m) >> shift``.
+              One accumulator and one shift per band in silicon, updated once
+              per frame -- the same arithmetic the cascade already does, and
+              the only mode that a streaming chip can actually implement.
+    ``clip``  subtract the whole clip's per-band mean. Not causal and not
+              implementable; it is the upper bound on what ``ema`` could reach
+              and is here to say whether the idea is worth building.
+    ``none``  what the chip does today.
+    """
+    if mode == "none":
+        return X
+    if mode == "clip":
+        return X - X.mean(1, keepdims=True)
+    if mode != "ema":
+        raise SystemExit(f"unknown --norm {mode!r}")
+    m = X[:, :1, :].copy()
+    out = np.empty_like(X)
+    for t in range(X.shape[1]):
+        out[:, t, :] = X[:, t, :] - m[:, 0, :]
+        m[:, 0, :] += (X[:, t, :] - m[:, 0, :]) / (1 << shift)
+    return out
+
+
+def keep_stats(feats: np.ndarray, d, want: str, cfg):
+    """Slice a multi-statistic extraction down to a subset of its planes.
+
+    ``fe_stats.py`` writes all of max/min/mean/last/emaK in one pass -- the
+    cost is the per-tick cascade, which is shared -- laid out band-major as
+    ``feats[..., band*nstat + stat]``. This picks the columns for the wanted
+    statistics so one extraction serves every subset, instead of re-running the
+    cascade once per candidate.
+    """
+    if not want:
+        return feats, cfg
+    if "stats" not in d.files:
+        raise SystemExit("--keep-stats given but this extraction has no 'stats' array")
+    have = [str(s) for s in d["stats"]]
+    sel = [s.strip() for s in want.split(",") if s.strip()]
+    missing = [s for s in sel if s not in have]
+    if missing:
+        raise SystemExit(f"--keep-stats {missing} not in this extraction {have}")
+    nstat = len(have)
+    nb = cfg.nband // nstat
+    idx = [b * nstat + have.index(s) for b in range(nb) for s in sel]
+    cfg.nband = nb * len(sel)
+    return feats[:, :, idx], cfg
+
+
+def load(tag: str, nframe: int, dev, norm: str = "none", norm_shift: int = 2,
+         want_stats: str = ""):
     d = np.load(os.path.join(ART, f"ww_feats_{tag}.npz"), allow_pickle=True)
     feats, labels, splits = d["feats"], d["labels"], d["splits"]
     cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
+    feats, cfg = keep_stats(feats, d, want_stats, cfg)
     NF = nframe or cfg.nframe
     if NF > feats.shape[1]:
         raise SystemExit(f"--nframe {NF} > {feats.shape[1]} cached frames")
     hop = max(1, NF // cfg.nphase)
     starts = list(range(0, feats.shape[1] - NF + 1, hop))
-    X = feats.astype(np.float32)
+    X = level_norm(feats.astype(np.float32), norm, norm_shift)
     tr = splits == 0
     mu, sd = X[tr].mean((0, 1)), X[tr].std((0, 1)) + 1e-3
     Xw = np.stack([(X[:, s:s + NF] - mu) / sd for s in starts], 1)
@@ -112,10 +171,19 @@ def main() -> None:
     ap.add_argument("--ladder", default="", help="comma-separated subset of the ladder")
     ap.add_argument("--out", default=os.path.join(ART, "optim", "probe.jsonl"))
     ap.add_argument("--note", default="", help="free-text label for the jsonl row")
+    ap.add_argument("--norm", default="none", choices=["none", "ema", "clip"],
+                    help="per-band adaptive level tracking; see level_norm()")
+    ap.add_argument("--norm-shift", type=int, default=2,
+                    help="ema time constant: m += (x - m) >> shift, per frame")
+    ap.add_argument("--keep-stats", default="",
+                    help="for a fe_stats.py extraction, the subset of its per-frame "
+                         "statistics to score, e.g. max,ema3 (default: all of them)")
     args = ap.parse_args()
 
     dev = torch.device(args.device)
-    Xf, Y, labels, splits, cfg, W = load(args.tag, args.nframe, dev)
+    Xf, Y, labels, splits, cfg, W = load(args.tag, args.nframe, dev,
+                                         args.norm, args.norm_shift,
+                                         args.keep_stats)
     tr_idx = np.where(splits == 0)[0]
     va, te = splits == 1, splits == 2
     want = set(args.ladder.split(",")) if args.ladder else None
@@ -145,6 +213,7 @@ def main() -> None:
             best = row
 
     out = dict(tag=args.tag, note=args.note, nframe=args.nframe or cfg.nframe,
+               norm=args.norm, norm_shift=args.norm_shift, keep_stats=args.keep_stats,
                nband=cfg.nband, tap0=cfg.tap0, mant=cfg.mant,
                frame_log2=cfg.frame_log2, k_shift=cfg.k_shift,
                seeds=args.seeds, epochs=args.epochs, ladder=rows,

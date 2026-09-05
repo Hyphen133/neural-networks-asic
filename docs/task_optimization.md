@@ -181,3 +181,229 @@ Two facts worth keeping:
 **Conclusion after two rounds.** The classifier cannot get wider and, per round
 1, could not reach 90 % even if it did. The search now goes entirely to the
 front end, funded by `STATE_W=9` if the accuracy cost is acceptable.
+
+---
+
+## Round 3 — which front-end axis is starving these detectors?
+
+**Hypothesis.** Five candidate changes to what the front end measures, each
+plausible on its own grounds, probed on four pilot tasks spanning the range
+(`catmeow` best, `siren`/`dogbark` mid, `water` low-but-with-headroom):
+
+| | change | why |
+|---|---|---|
+| `k3` | `K_SHIFT` 2→3 | moves the six octaves from 243 Hz–15.5 kHz down to 121 Hz–7.8 kHz. The corpora are 16 kHz sources, so today's top band is mostly above the content. |
+| `nb7` | `NBAND` 6→7 | keeps all six and adds 121–243 Hz underneath (`NSTAGE` 9→10). |
+| `m2` | `MANT` 1→2 | 1.5 dB log steps instead of 3 dB (`FEAT_W` 4→5). |
+| `fl15` | `FRAME_LOG2` 15 | 21 ms frames: twice the time resolution. |
+| `fl17` | `FRAME_LOG2` 17 | 84 ms frames: half the resolution, twice the span. |
+
+plus a free control — probe the *unchanged* features over other window lengths
+(`NFRAME` 2, 4, 16, 24), which costs only weight ROM.
+
+`train/extract_clips.py` gained `--cache-tag` for this, so a geometry sweep
+re-runs only the front end and never re-decodes a corpus.
+
+**Result.** Validation AUC (the selection criterion), best rung of an
+MLP-32/64 ladder, 2 seeds. Baseline is the shipped geometry at `NFRAME=8`.
+
+| variant | `catmeow` | `siren` | `dogbark` | `water` |
+|---|---:|---:|---:|---:|
+| baseline | 92.29 | 86.67 | 79.29 | 78.89 |
+| `k3` | 93.12 | 86.89 | **83.05** | **84.09** |
+| `nb7` | 92.93 | 88.74 | 80.57 | 80.09 |
+| `m2` | 92.91 | **88.83** | 80.14 | 80.68 |
+| `fl15` @ `NFRAME`=16 | **93.38** | 87.33 | 80.00 | 81.12 |
+| `fl17` | 92.60 | 88.37 | 78.07 | 81.55 |
+| `NFRAME`=16 | 92.00 | 88.49 | 78.59 | 81.79 |
+| `NFRAME`=24 | 91.65 | 89.04 | 78.81 | 82.36 |
+
+**Every axis is worth about a point, and which axis is strongly per-task.**
+`K_SHIFT=3` is the best change available to `dogbark` (+3.8) and `water`
+(+4.2) and the worst available to `catmeow` on test (80.74 against a baseline
+84.22) — a dog's bark and running water live in the octaves `k3` moves the
+bands onto, a cat's meow does not. Since each detector is already its own
+build, that is a per-task choice, not a compromise.
+
+**The subsidiary result turned out to matter more than the main one.** The
+free window-length control found `NFRAME=4` scoring as well as `NFRAME=8` on
+`catmeow` (test 85.06 vs 84.22) and `babycry` (76.25 vs 76.60) — at half the
+weight ROM. That reopened the area question and produced round 7.
+
+Area, measured alongside: `K_SHIFT=3` +58 µm², `FRAME_LOG2=15` +58,
+`FRAME_LOG2=17` −66, `MANT=2` +809 (FAIL alone), `NFRAME=16` +740 (FAIL
+alone), `NBAND=7` +1620 (FAIL, and still FAIL with `STATE_W=9`).
+
+---
+
+## Round 4 — what does the funding source cost?
+
+**Hypothesis.** `STATE_W` 10→9 frees 883 µm², more than the 536 µm² of
+headroom in §1a, and is the only way to pay for `MANT=2` or `NFRAME=16`. But
+it narrows the cascade state, and its accuracy cost has never been measured on
+anything. If it costs more than `MANT=2` gains, the branch is dead.
+
+**Experiment.** Extract `st9` alone and each affordable stack, probe at the
+window lengths that fit.
+
+**Result — `STATE_W=9` is not a cost. It is a gain, on every task tried.**
+
+| | baseline | `st9` | `m2st9` | `fl15st9` | `fl15m2st9` |
+|---|---:|---:|---:|---:|---:|
+| `catmeow` | 92.29 | 94.43 | 92.96 | 93.67 | **94.61** |
+| `siren` | 86.67 | **90.14** | 89.49 | 88.58 | 89.04 |
+| `dogbark` | 79.29 | 83.74 | 83.37 | 83.88 | **84.32** |
+| `water` | 78.89 | **85.74** | 82.77 | 84.34 | 83.51 |
+
+(validation AUC; `st9`, `fl15st9` and `fl15m2st9` at `NFRAME=16`, the rest at 8.)
+
+A narrower cascade state regularises: 9 bits still resolves every band the log
+feature can encode, and the extra bit was only carrying dither. The gain is
++2.1 to +6.9 validation points for −883 µm².
+
+**But the best-by-validation stacks do not fit.** `NFRAME=16` was never gated
+in round 3, and when it was: `NFRAME=16, MANT=2, STATE_W=9` is 22 666 µm²
+(fl16) or 22 488 (fl15), both over the 22 150 budget. `NFRAME=16` with
+`MANT=1` and `STATE_W=9` fits at 21 690 (fl16) and 21 507 (fl15). So the
+fitting winners are `st9` for `catmeow`, `siren` and `water`, and `fl15st9`
+for `dogbark` — `MANT=2` is affordable only at `NFRAME` ≤ 8.
+
+---
+
+## Round 5 — is a second statistic per band worth more than a seventh band?
+
+**Hypothesis.** The front end keeps exactly one number per band per frame: the
+maximum log magnitude over 41.9 ms. Everything else the band did is discarded.
+A second statistic costs one more `FEAT_W` register and one more comparator
+per band — no extra cascade stage, no extra decimator, no extra 10-bit state —
+which is far cheaper than `NBAND=7`'s +1620 µm². Three candidates: `max,min`
+(modulation depth — a transient against a steady tone), `max,mean` (average
+energy), `max,min,mean`.
+
+`train/optim/fe_stats.py` runs the same bit-exact cascade as
+`wwhw.frontend_batch` and records all four statistics; its `max` plane was
+checked **byte-identical** to `extract_clips.py`'s output on `catmeow` before
+the round was run.
+
+**Result — this is the largest effect in the whole search.**
+
+Test AUC, best rung by validation, at the window length that won:
+
+| task | baseline | `max,min` | `max,mean` | `max,min,mean` |
+|---|---:|---:|---:|---:|
+| `babycry` | 74.63 | 75.68 | **83.67** | 84.59 |
+| `catmeow` | 84.22 | 84.97 | **87.66** | 87.75 |
+| `siren` | 82.10 | 82.15 | **86.98** | 86.82 |
+| `dogbark` | 81.34 | 80.70 | **83.68** | 84.64 |
+| `water` | 71.98 | 71.13 | **75.09** | 77.26 |
+| `clap` | 72.73 | 72.65 | **75.14** | 74.40 |
+
+**It is specifically the average, not "a second number".** `max,min` is worth
+nothing at all — on three of six tasks it is *worse* than one statistic — while
+`max,mean` is worth +2.4 to +9.0 test AUC. And `max,min,mean` is not reliably
+better than `max,mean`, so the min carries no information the other two lack:
+the frame minimum is the band's quiet floor, dominated by which decimation
+phase the frame boundary lands on.
+
+For scale: the mean is worth more on `babycry` alone (+9.0) than every cascade
+change in rounds 3 and 4 combined, on any task.
+
+**Caveat that round 10 exists to settle:** `mean` as measured is an exact
+per-frame average, and each band ticks a different number of times per frame
+(2^(`FRAME_LOG2`−b)), so an exact mean needs a per-band divisor. It is not
+buildable as it stands.
+
+---
+
+## Round 6 — is sheila's training recipe wrong for these corpora?
+
+**Hypothesis.** `new_tasks.md` §6 says plainly that "no hyper-parameter search
+was run for any task": all eight use the recipe tuned on Speech Commands.
+These corpora differ from it in every way an optimiser cares about — 4 625 to
+43 499 clips, 8 % to 78 % positive, 92 to 3 330 validation positives — so
+per-task tuning of the *free* knobs should be worth a point at zero area.
+
+**Experiment.** Coordinate sweep over 28 configurations (pooling, warmup,
+epochs, four kinds of augmentation, label smoothing, positive weighting,
+requantiser leak, three learning rates, weight decay, EMA, schedule, `HSHIFT`),
+4 seeds each, ranked by mean validation AUC.
+
+**Refuted.** The best configuration beats the shipped recipe by **0.5 points on
+`catmeow` (92.39 vs 91.87) and 0.2 on `clap` (84.61 vs 84.42)**, both inside
+the seed spread. The winners — `aug_time=1`, `epochs=2000`, `pos_weight=2.0` —
+are all marginal, and no knob moved any task by more than its own ±0.3–0.8
+standard deviation.
+
+This is a useful negative. It says the recipe was never the problem, and it
+means every later round can keep using it unchanged rather than re-tuning per
+front end.
+
+---
+
+## Round 7 — the affordable design space, enumerated
+
+**Hypothesis.** Round 3 gated one axis at a time against `NFRAME=8` and
+concluded `MANT=2` needs `STATE_W=9` and `NBAND=7` is unreachable. Round 3's
+own control undermines both: `NFRAME=4` scores as well as 8 on two tasks and is
+worth 577 µm². The box should be enumerated, not walked.
+
+**Experiment.** 72 points: `NFRAME` ∈ {2,4,8} × `NBAND` ∈ {6,7} × `MANT` ∈
+{1,2} × `STATE_W` ∈ {9,10} × `FRAME_LOG2` ∈ {15,16,17}, later extended with
+`NFRAME`=16. Every point is a synthetic header at the shipped 74 % weight
+density, which runs 250–700 µm² heavier than the real headers the eight tasks
+emit — so a TIGHT here is comfortable in practice and a FAIL is real.
+
+**Result. 35 of 72 fit**, and the reachable menu is much narrower than the
+axis-at-a-time view suggested:
+
+* **`NBAND=7` and `MANT=2` never fit together**, at any window length.
+* **`NBAND=7` needs both `NFRAME` ≤ 4 and `STATE_W=9`** (21 614–21 799 TIGHT).
+  At `STATE_W=10` it fails at every window length.
+* **`MANT=2` needs `NFRAME` ≤ 8 and `STATE_W=9`** — or `NFRAME` ≤ 4 on its own.
+* `FRAME_LOG2` is free across the whole box (±60 µm²), so time resolution
+  costs nothing and can be chosen per task on accuracy alone.
+* The cheapest fitting point is `NFRAME=2, STATE_W=9` at 19 585 µm² — 88.4 % of
+  core, 2 565 µm² under budget. Halving the window twice pays for a great deal.
+
+---
+
+## Round 8 — should the chip track its own input level?
+
+**Hypothesis.** The chip subtracts one *constant*, `FEAT_OFF`, from every band
+of every frame, so a detector trained at one input level degrades at another.
+`docs/robustness.md` measures exactly that: a 3 dB level drop takes sheila's
+recall from 19.8 % to 3.1 %. Replacing the constant with a level the design
+tracks for itself — `m += (x − m) >> shift` per band, one accumulator and one
+shift, updated once per frame — should help, and should help most on the
+corpora with the widest recording-level spread.
+
+**Experiment.** Three time constants (shift 1, 2, 3) plus `clip`, a
+non-causal per-clip mean subtraction that is not implementable and is there
+only as the upper bound on what the causal version could reach. All eight tasks.
+
+**Refuted on all eight, including by the upper bound.** Validation / test AUC:
+
+| task | none | ema shift 1 | shift 2 | shift 3 | clip (upper bound) |
+|---|---|---|---|---|---|
+| `babycry` | **77.81 / 74.87** | 73.75 / 71.33 | 74.77 / 72.01 | 74.57 / 73.04 | 74.05 / 71.95 |
+| `catmeow` | **92.38 / 83.98** | 87.08 / 73.09 | 89.28 / 75.35 | 89.44 / 75.58 | 89.76 / 76.22 |
+| `clap` | **85.93 / 72.57** | 82.40 / 67.36 | 82.76 / 66.17 | 83.16 / 69.20 | 83.89 / 68.89 |
+| `dogbark` | 79.10 / **81.37** | 79.25 / 79.52 | 79.29 / 80.66 | 79.40 / 81.26 | 79.65 / 79.84 |
+| `mosquito` | **91.62 / 64.71** | 89.33 / 63.49 | 89.72 / 63.74 | 90.01 / 65.15 | 91.02 / 65.55 |
+| `siren` | **86.57 / 81.98** | 82.02 / 75.40 | 82.66 / 75.68 | 82.28 / 76.75 | 83.29 / 76.62 |
+| `vad` | **82.32 / 63.47** | 80.14 / 62.58 | 80.89 / 63.36 | 81.30 / 64.51 | 81.34 / 63.16 |
+| `water` | **79.92 / 73.52** | 77.84 / 68.44 | 79.46 / 69.27 | 79.46 / 70.23 | 79.92 / 72.70 |
+
+**Absolute level is a feature, not a nuisance, on all eight corpora.** Removing
+it costs 3–9 validation points, and the non-causal bound costs almost as much,
+so this is not a matter of choosing a better time constant. It makes sense once
+stated: in every one of these datasets a positive clip is one where the event
+is *near the microphone*, and loudness is a real part of the answer. That is a
+property of the corpora rather than of the question, and it is worth writing
+down — a detector built this way will be level-sensitive in the field, as
+`robustness.md` already found for sheila.
+
+Note the contrast with round 5, which is not a contradiction: round 5 *adds* a
+smoothed level as an extra feature and keeps the max; round 8 *replaces* the
+level by subtracting it. The model wants both the peak and the average, and
+wants to keep the absolute value of both.

@@ -47,7 +47,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ART = os.path.join(ROOT, "artifacts")
 CACHE = os.path.join(ART, "data")
 
-STATS = ("max", "min", "mean", "last")
+STATS = ("max", "min", "mean", "last", "ema2", "ema3", "ema4")
+
+# Leaky-integrator shifts offered as statistics. `mean` is an exact per-frame
+# average and is NOT buildable as it stands: the tick count differs per band
+# (2^(FRAME_LOG2-b)), so an exact mean needs a per-band divisor. `emaK` is the
+# same idea with the arithmetic the cascade already uses -- m += (f - m) >> K,
+# one accumulator and one shift per band, carried across frame boundaries --
+# and is what the RTL would actually implement. If emaK does not reproduce
+# mean's gain, the gain is not reachable.
+EMA_SHIFT = {"ema2": 2, "ema3": 3, "ema4": 4}
 
 
 def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
@@ -68,6 +77,10 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
     fsum = np.zeros((cfg.nband, B), dtype=np.int64)
     flast = np.zeros((cfg.nband, B), dtype=np.int32)
     fcnt = np.zeros(cfg.nband, dtype=np.int64)
+    # Leaky integrators, carried across frame boundaries: the accumulator holds
+    # the mean shifted left by K so that the >> K is exact and no rounding
+    # state is lost, which is how it would be built.
+    ema = {k: np.zeros((cfg.nband, B), dtype=np.int32) for k in EMA_SHIFT}
 
     frame_mask = (1 << cfg.frame_log2) - 1
     taps = [cfg.tap0 + i for i in range(cfg.nband)]
@@ -91,6 +104,9 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
             fsum[i] += f
             flast[i] = f
             fcnt[i] += 1
+            for k, sh in EMA_SHIFT.items():
+                acc = ema[k][i]
+                acc += ((f << sh) - acc) >> sh
 
         if (n & frame_mask) == frame_mask:
             fr = n >> cfg.frame_log2
@@ -99,6 +115,9 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
             out[:, fr, :, 1] = fmin.T
             out[:, fr, :, 2] = ((fsum + cnt // 2) // cnt).astype(np.int32).T
             out[:, fr, :, 3] = flast.T
+            for k, sh in EMA_SHIFT.items():
+                out[:, fr, :, STATS.index(k)] = np.clip(
+                    ema[k] >> sh, 0, cfg.feat_max).T
             fmax[:] = 0
             fmin[:] = cfg.feat_max
             fsum[:] = 0
