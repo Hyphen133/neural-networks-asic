@@ -315,10 +315,104 @@ phase the frame boundary lands on.
 For scale: the mean is worth more on `babycry` alone (+9.0) than every cascade
 change in rounds 3 and 4 combined, on any task.
 
-**Caveat that round 10 exists to settle:** `mean` as measured is an exact
-per-frame average, and each band ticks a different number of times per frame
-(2^(`FRAME_LOG2`−b)), so an exact mean needs a per-band divisor. It is not
-buildable as it stands.
+**Caveat that rounds 10 and 16 exist to settle:** `mean` as measured is an
+exact per-frame average, and each band ticks a different number of times per
+frame (2^(`FRAME_LOG2`−b)), so an exact mean needs a per-band divisor. It is
+not buildable as it stands.
+
+---
+
+## Round 10 — the obvious buildable form is the wrong statistic
+
+**Hypothesis.** Replace the exact mean with a leaky integrator, `favg +=
+(feat − favg) >> K`: one accumulator and one shift per band, the same
+arithmetic the cascade already does `NSTAGE` times per tick. If `emaK`
+reproduces `mean`'s gain, round 5 is buildable as it stands.
+
+**Refuted.** On `babycry`, best rung by validation, val / test:
+
+| statistic | val | test |
+|---|---:|---:|
+| `max` (control, reproduces round 1) | 78.48 | 76.57 |
+| `max,ema2` | 78.92 | 76.40 |
+| `max,ema3` | 79.51 | 76.98 |
+| `max,ema4` | 80.01 | 78.73 |
+| `max,mean` | **83.61** | **83.63** |
+| `ema3` alone | 71.98 | 72.13 |
+
+The leaky integrator recovers about a third of the gain, and it rises
+monotonically with K. That monotonicity is the diagnosis: `emaK` averages over
+roughly 2^K ticks, and a frame is 2^(`FRAME_LOG2`−b) ticks — 8 192 at band 3.
+At K=4 the integrator is measuring a sixteenth of a frame at the lowest band.
+**The average that matters spans the frame**, and no fixed shift gets there:
+K large enough for band 3 needs the accumulator held at `FEAT_W`+13 bits, which
+is 17 bits per band.
+
+Also worth recording: `ema3` *alone*, replacing the max rather than joining it,
+is worse than the max alone. The two statistics are complements, not
+substitutes.
+
+---
+
+## Round 16 — the frame mean, made cheap
+
+**Hypothesis.** Keep the frame mean and make the *sample count* the thing that
+is constant, instead of the tick count. Take exactly 2^K samples per band per
+frame by accumulating only every 2^j-th tick of band b, with
+`j = FRAME_LOG2 − b − K`. Then the accumulator is `FEAT_W+K` bits for every
+band and the divide is a constant `>> K`.
+
+The reason this is nearly free is a coincidence of the framing. Band b is due
+when `cnt[b-1:0]` is zero; "every 2^j-th tick of band b" is
+`cnt[b+j-1:b] == 0`; and `b+j-1 = FRAME_LOG2 − K − 1` **independently of b**.
+Combining the two, the sampling instant is just
+
+    cnt[FRAME_LOG2-AVG_SHIFT-1:0] == 0
+
+— one AND over counter bits that already exist, shared across the whole ring.
+Checked exhaustively over a frame: the shared test selects exactly the same
+ticks as the per-band stride, 64 samples per band at K=6, for every band.
+
+**Result.** `smeanK` recovers most of what the exact mean is worth, and more of
+it on test than on validation:
+
+| statistic | `babycry` val | test | `siren` val | test |
+|---|---:|---:|---:|---:|
+| `max` | 78.48 | 76.57 | 86.53 | 82.02 |
+| `max,ema4` | 80.01 | 78.73 | 88.86 | 84.45 |
+| `max,smean4` | 80.62 | 81.11 | 89.31 | 84.99 |
+| `max,smean5` | 81.36 | 81.17 | 90.85 | 84.37 |
+| `max,smean6` | **81.59** | **83.08** | **91.31** | **85.47** |
+| `max,mean` (not buildable) | 83.61 | 83.63 | 92.19 | 86.88 |
+
+`smean6` captures **6.5 of the 7.1 test points** on `babycry` and 3.5 of 4.9 on
+`siren`, against `ema4`'s 2.2 and 2.4. So the round 5 result survives into
+something that can be built.
+
+**The RTL** (`NSTAT=2`, `AVG_SHIFT=6`) is a second rotating ring of
+`FEAT_W+AVG_SHIFT` = 10-bit accumulators, gated by the shared sample enable,
+cleared at the frame boundary with `fmax`, and read as its top `FEAT_W` bits.
+At `NSTAT=1` the design still synthesises to 1301 cells, 207 flops, 21 857 µm²
+— unchanged from before any of this.
+
+**What it costs: the sixth band, and then some.** With 10-bit accumulators:
+
+| geometry (`STATE_W=9`) | synth µm² | verdict |
+|---|---:|---|
+| 4 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1` | 19 643 | FIT |
+| 4 bands, `NFRAME=4`, `NHID=4`, `NPHASE=1` | 20 390 | FIT |
+| 4 bands, `NFRAME=2`, **`NHID=8`**, `NPHASE=1` | 21 326 | TIGHT |
+| 5 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1`, K=4 | 21 429 | TIGHT |
+| 5 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1`, K=6 | 22 037 | TIGHT |
+| 5 bands, `NFRAME=4`, `NHID=4`, `NPHASE=1`, K=6 | 22 879 | FAIL |
+| 6 bands, anything | 23 699+ | FAIL |
+
+**Five bands is the ceiling with the mean, six without it.** So the design
+choice is now a genuine three-way trade, and it is per task:
+
+* **6 bands, max only, `NHID=8`, `NPHASE=1`, `NFRAME=4`** — 21 064, FIT
+* **5 bands, max + mean, `NHID=4`, `NPHASE=1`, `NFRAME=2`** — 21 429–22 037
+* **4 bands, max + mean, `NHID=8`, `NPHASE=1`, `NFRAME=2`** — 21 326
 
 ---
 
