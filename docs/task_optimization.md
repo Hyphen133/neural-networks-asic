@@ -453,11 +453,18 @@ one for a sustained low-frequency component, which is exactly where these
 detectors' evidence lives.
 
 **So the RTL parameter is `AVG_N`**, not a flag: how many bands, counted from
-the deepest tap, keep a mean beside their maximum. `NSTAT` is gone. At
-`AVG_N=0` the design is proved equivalent to the pre-change RTL by a bounded
-sequential SAT miter (`sat -seq 40 -set-init-zero -verify -prove-asserts`,
-all inputs, from reset) — synthesised area moves by 47 µm² and the flop count
-does not move at all.
+the deepest tap, keep a mean beside their maximum. `NSTAT` is gone.
+
+At `AVG_N=0` the design is proved equivalent to the RTL as it stood **before
+any of this work** (commit `1950f5c`) by a bounded sequential SAT miter —
+`sat -seq 60 -set-init-zero -verify -prove-asserts`, all inputs, from reset.
+Synthesised area moves by 47 µm² and the flop count does not move at all, so
+the shipped `sheila` and `drone` builds are untouched in behaviour.
+
+That check is worth doing against the *original* rather than the previous
+revision: an earlier equivalence run in this session compared two intermediate
+versions and would have said nothing about the `NSTAT`→`AVG_N` rework that
+came after it.
 
 ---
 
