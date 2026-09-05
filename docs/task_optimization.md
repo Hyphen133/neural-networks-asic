@@ -634,6 +634,25 @@ accumulator. Every comparison available without F conflates "does the mean
 help?" with "does what it cost hurt more?". F is D with the mean deleted and
 nothing else changed.
 
+**The full matrix**, all eight tasks, validation / test, 4 seeds. Selection is
+on validation; the test column is recorded and not used to choose.
+
+| task | A | B | C | D | E | F |
+|---|---|---|---|---|---|---|
+| `babycry` | **80.1** / 77.6 | 78.5 / 77.5 | 75.8 / 71.9 | 77.4 / 75.9 | 76.2 / 73.2 | 77.9 / 76.2 |
+| `catmeow` | **91.5** / 82.5 | 91.4 / 83.2 | 89.5 / 77.9 | 89.1 / 75.0 | 90.2 / 79.7 | — |
+| `clap` | 84.4 / 67.4 | 84.3 / 69.2 | 82.1 / 64.8 | 81.0 / 63.3 | **85.4** / 68.3 | — |
+| `dogbark` | **79.5** / 80.4 | 77.2 / 77.9 | 72.9 / 72.3 | 75.3 / 75.7 | 72.5 / 72.1 | — |
+| `mosquito` | **86.5** / 58.3 | 85.8 / 58.2 | — | — | — | — |
+| `siren` | **87.6** / 80.9 | 86.5 / 81.1 | 83.2 / 78.3 | 85.5 / 80.3 | 83.7 / 78.0 | 85.3 / 79.9 |
+| `vad` | **81.9** / 66.9 | 79.5 / 65.7 | 77.4 / 64.1 | 79.9 / 64.5 | 77.4 / 64.1 | — |
+| `water` | **76.7** / 65.7 | 76.5 / 65.1 | 73.0 / 62.6 | 74.3 / 64.8 | 75.2 / 63.1 | — |
+
+**Design A wins seven of eight**, and every mean-carrying design (C, D, E)
+loses on every task but `clap` — where E leads by 0.96 against a ±0.89 seed
+spread, i.e. inside noise, while costing 1 027 µm² more and landing TIGHT
+rather than FIT.
+
 **D − F, the frame mean's actual value on the chip:**
 
 | task | D (with mean) | F (without) | difference |
