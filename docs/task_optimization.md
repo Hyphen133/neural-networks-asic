@@ -407,3 +407,71 @@ Note the contrast with round 5, which is not a contradiction: round 5 *adds* a
 smoothed level as an extra feature and keeps the max; round 8 *replaces* the
 level by subtracting it. The model wants both the peak and the average, and
 wants to keep the absolute value of both.
+
+---
+
+## Round 11 — building the second statistic
+
+**Hypothesis.** Round 5's `mean` is not buildable: it is an exact per-frame
+average and each band ticks a different number of times per frame
+(2^(`FRAME_LOG2`−b)), so it needs a per-band divisor. The buildable form is a
+leaky integrator carried across frame boundaries — `favg += (feat − favg) >>
+AVG_SHIFT`, one accumulator and one shift per band, the same arithmetic the
+cascade already does `NSTAGE` times per tick.
+
+**The RTL.** `src/tt_um_wakeword.sv` gains `NSTAT` (1 or 2) and `AVG_SHIFT`.
+`NSTAT=2` adds a second rotating ring `favg`, rotated in lockstep with `fmax`
+so the band under update is always at the head, held shifted left by
+`AVG_SHIFT` so the shift is exact and no rounding state is lost. It is
+deliberately **not** cleared at the frame boundary: it is an integrator with a
+time constant of its own, and clearing it every frame would turn it back into a
+per-frame statistic whose value depends on where the boundary fell. The
+template then reads `NBAND*NSTAT` features per row, band-major — `[band0 max,
+band0 avg, band1 max, …]`, the same order `fe_stats.py` writes.
+
+**Regression first.** At the default `NSTAT=1` the design synthesises to
+**1301 cells, 207 flops, 21 857 µm²** — identical in all three numbers to
+`r3_ref` measured before the change. Both builds still elaborate under
+iverilog, with the same (pre-existing) `constant selects in always_*` warning
+the unmodified file produces. The change is a true no-op for everything that
+ships today.
+
+**Result — the average costs two bands.** `NSTAT=2`, `AVG_SHIFT=3`,
+`STATE_W=9`:
+
+| `NBAND` | `NFRAME`=2 | `NFRAME`=4 | `NFRAME`=8 |
+|---|---:|---:|---:|
+| 4 | 21 427 TIGHT | **21 975 TIGHT** | 22 563 FAIL |
+| 5 | 23 949 FAIL | 24 212 FAIL | 25 215 FAIL |
+| 6 | 26 146 FAIL | 26 921 FAIL | 27 483 FAIL |
+
+A shorter time constant does not rescue the fifth band — `AVG_SHIFT=1` narrows
+the accumulator by two bits and still lands at 23 209. Each extra band with
+`NSTAT=2` costs a `STATE_W` word, a `FEAT_W` max register, an `AVG_W`
+accumulator, a cascade stage **and** two adder-tree columns, so the marginal
+band is roughly 2 500 µm² rather than the ~400 it costs at `NSTAT=1`.
+
+**But two further savings buy the fifth band back.** `NPHASE` 2→1 halves the
+hidden accumulator ring (`NSLOT = NPHASE*NHID`) and `HACC_W` 6→5 narrows every
+one of them:
+
+| configuration | synth µm² | verdict |
+|---|---:|---|
+| `NBAND=5 NFRAME=2 NPHASE=1 HACC_W=5` | **20 979** | FIT |
+| `NBAND=5 NFRAME=4 NPHASE=1 HACC_W=5` | **21 340** | TIGHT |
+| `NBAND=5 NFRAME=2 NPHASE=1 HACC_W=6` | 22 263 | FAIL |
+| `NBAND=6 NFRAME=2 NPHASE=1 HACC_W=5` | 23 439 | FAIL |
+
+So **five bands is the ceiling with the average, and six is unreachable by any
+combination tried.** Neither saving is free in accuracy: `NPHASE=1` stops the
+scored windows overlapping, which coarsens the multiple-instance bag, and the
+bag has to be the one the hardware scores — `nn_optimization.md` measured a
+mismatched training grid costing 9 points. `HACC_W=5` is invisible to the fp32
+probe entirely and needs the quantised trainer to evaluate.
+
+**This leaves three candidate shapes**, which rounds 12 and 13 score against
+each other and against the six-band max the eight detectors ship with today:
+
+* 6 bands, max only — today, `NSTAT=1`
+* 4 bands, max + average, `NPHASE=2`, `HACC_W=6`
+* 5 bands, max + average, `NPHASE=1`, `HACC_W=5`
