@@ -47,7 +47,25 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ART = os.path.join(ROOT, "artifacts")
 CACHE = os.path.join(ART, "data")
 
-STATS = ("max", "min", "mean", "last", "ema2", "ema3", "ema4")
+STATS = ("max", "min", "mean", "last", "ema2", "ema3", "ema4",
+         "smean4", "smean5", "smean6")
+
+# Subsampled per-frame mean: the buildable version of `mean`.
+#
+# An exact frame mean needs a per-band divisor, because band b ticks
+# 2^(FRAME_LOG2-b) times per frame -- 8192 times at band 3, 256 at band 8. A
+# leaky integrator avoids the divisor but measures the wrong thing: emaK is an
+# average over ~2^K ticks, and at K=4 that is a sixteenth of a frame at the
+# lowest band. It recovers about a third of `mean`'s gain and rises
+# monotonically with K, which says the average that matters spans the frame.
+#
+# So keep the frame mean and make the *count* a power of two that is the same
+# for every band: accumulate only every 2^j-th tick of band b, with
+# j = FRAME_LOG2 - b - K, giving exactly 2^K samples per band per frame. The
+# accumulator is then FEAT_W+K bits wide for every band and the divide is a
+# constant >> K. In silicon j is a comparison against counter bits that are
+# already there -- wiring, not a shifter -- and the estimate is unbiased.
+SMEAN_K = {"smean4": 4, "smean5": 5, "smean6": 6}
 
 # Leaky-integrator shifts offered as statistics. `mean` is an exact per-frame
 # average and is NOT buildable as it stands: the tick count differs per band
@@ -81,6 +99,12 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
     # the mean shifted left by K so that the >> K is exact and no rounding
     # state is lost, which is how it would be built.
     ema = {k: np.zeros((cfg.nband, B), dtype=np.int32) for k in EMA_SHIFT}
+    # Subsampled frame means: one accumulator per band per K, plus the stride
+    # j that makes every band contribute exactly 2^K samples per frame.
+    smean = {k: np.zeros((cfg.nband, B), dtype=np.int32) for k in SMEAN_K}
+    sstride = {k: [max(1, 1 << max(0, cfg.frame_log2 - (cfg.tap0 + i) - K))
+                   for i in range(cfg.nband)] for k, K in SMEAN_K.items()}
+    btick = np.zeros(cfg.nband, dtype=np.int64)     # band ticks within the frame
 
     frame_mask = (1 << cfg.frame_log2) - 1
     taps = [cfg.tap0 + i for i in range(cfg.nband)]
@@ -107,6 +131,10 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
             for k, sh in EMA_SHIFT.items():
                 acc = ema[k][i]
                 acc += ((f << sh) - acc) >> sh
+            for k in SMEAN_K:
+                if btick[i] % sstride[k][i] == 0:
+                    smean[k][i] += f
+            btick[i] += 1
 
         if (n & frame_mask) == frame_mask:
             fr = n >> cfg.frame_log2
@@ -118,6 +146,12 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
             for k, sh in EMA_SHIFT.items():
                 out[:, fr, :, STATS.index(k)] = np.clip(
                     ema[k] >> sh, 0, cfg.feat_max).T
+            for k, K in SMEAN_K.items():
+                # Exactly 2^K samples per band, so the mean is a constant >> K.
+                out[:, fr, :, STATS.index(k)] = np.clip(
+                    smean[k] >> K, 0, cfg.feat_max).T
+                smean[k][:] = 0
+            btick[:] = 0
             fmax[:] = 0
             fmin[:] = cfg.feat_max
             fsum[:] = 0
