@@ -131,13 +131,24 @@ def keep_stats(feats: np.ndarray, d, want: str, cfg):
         raise SystemExit("--keep-stats given but this extraction has no 'stats' array")
     have = [str(s) for s in d["stats"]]
     sel = [s.strip() for s in want.split(",") if s.strip()]
-    missing = [s for s in sel if s not in have]
+    missing = [s for s in sel if s.partition("@")[0] not in have]
     if missing:
         raise SystemExit(f"--keep-stats {missing} not in this extraction {have}")
     nstat = len(have)
     nb = cfg.nband // nstat
-    idx = [b * nstat + have.index(s) for b in range(nb) for s in sel]
-    cfg.nband = nb * len(sel)
+    # "max@all,smean6@0-2" keeps the max of every band and the mean of bands
+    # 0..2 only. Six accumulators is what makes NSTAT=2 cost the sixth band;
+    # if the mean only pays on some bands, only those need one.
+    idx = []
+    for b in range(nb):
+        for s in sel:
+            name, _, where = s.partition("@")
+            if where and where != "all":
+                lo, _, hi = where.partition("-")
+                if not (int(lo) <= b <= int(hi or lo)):
+                    continue
+            idx.append(b * nstat + have.index(name))
+    cfg.nband = len(idx)
     return feats[:, :, idx], cfg
 
 
