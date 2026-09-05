@@ -950,6 +950,89 @@ each other and against the six-band max the eight detectors ship with today:
 
 ---
 
+## Result
+
+Each detector trained over 8 seeds and selected on validation, the emitted
+header re-scored through the independent integer chip model in
+`train/eval_header.py`, and that **real header** synthesised at its own
+geometry with the `FEAT_OFF` the trainer actually used. Test AUC at the
+validation-selected seed, the same statistic `docs/new_tasks.md` reports.
+
+| task | round 0 | now | Δ | design | synth µm² | vs shipped 21 242 | export |
+|---|---:|---:|---:|---|---:|---:|---|
+| `babycry` | 72.36 | **78.54** | **+6.18** | A | 20 781 FIT | −461 | exact |
+| `siren` | 76.24 | **80.96** | **+4.72** | A | 20 777 FIT | −465 | exact |
+| `dogbark` | 75.74 | **79.68** | **+3.94** | A | 20 496 FIT | −746 | exact |
+| `vad` | 63.72 | **66.99** | **+3.27** | A | 20 514 FIT | −728 | exact |
+| `catmeow` | 79.74 | 79.74 | — | keep round 0 | | | |
+| `clap` | 72.32 | 72.32 | — | keep round 0 | | | |
+| `water` | 68.92 | 68.92 | — | keep round 0 | | | |
+| `mosquito` | 62.96 | 62.96 | — | keep round 0 | | | |
+
+**Four of eight improve, by 3.3 to 6.2 AUC, and every one of them is smaller
+than the design it replaces.** All four are design A: six bands, per-frame
+maximum, `NFRAME=8`, `NPHASE=2`, `NHID=4`, `HACC_W=6` — the shipped
+architecture with **one parameter changed, `STATE_W` 10 → 9**.
+
+**Four do not improve, and are left alone.** Three separate rules had to hold
+for that to come out right:
+
+* `catmeow` (−0.32 val) and `mosquito` (−3.68 val) are *worse* under every
+  candidate, because all 42 candidates were built on `STATE_W=9` features and
+  those two tasks dislike them. Round 23 compares each winner against the
+  incumbent and keeps the incumbent when it wins — without that guard it would
+  have shipped `mosquito` a detector 3.7 points worse than the one it has.
+* `clap` (+0.69 val, ±1.10) and `water` (+0.30 val, ±1.64) gain **less than
+  their own seed spread** while losing 2.9–3.3 points of test. A gain inside
+  the noise is not a gain; both keep round 0.
+
+## What the 90 % target came to
+
+**Not reached, and it was not reachable.** The evidence was available in round
+1 and I should have said so then rather than at round 25: an unconstrained fp32
+model on the shipped features tops out at 63.8–83.8 %, the best front end found
+lifts that to ~87 % on the two strongest tasks, and the ternary chip runs 3–6
+points below its own fp32 reference. The best result here, `siren` at 80.96 %,
+is nine points short.
+
+Two tasks are limited by data rather than design and no amount of silicon will
+move them: `mosquito`'s test split is HumBugDB's deliberate unseen-site domain
+shift, where the fp32 probe drops from 91.4 to 64.1 exactly as the chip does;
+`vad` asks a six-octave 3 dB front end to separate speech from music and
+broadband noise by syllabic envelope alone.
+
+## What actually mattered
+
+**One parameter.** `STATE_W` 10 → 9 is more accurate *and* 883 µm² cheaper. It
+is the entire result. Twenty-five rounds, a new RTL front-end capability, a
+72-point area frontier and ~180 trained configurations found nothing else that
+both helps and fits.
+
+**The frame mean is the cautionary tale.** It measured +2.4 to +9.0 AUC, I
+called it the largest effect in the search, and I built it: three
+implementations, an RTL parameter, a bit-exactness harness, an equivalence
+proof. Against a proper control it is worth **+0.25 on one task and −0.51 on
+another**, because (a) a four-unit ternary template cannot use extra features
+the way an MLP-64 can, and (b) it recovers the same information `STATE_W=9`
+does, for more area. It ships as `AVG_N=0`, costing nothing, fully documented.
+
+**Three conclusions in this document were wrong, all from one mistake:**
+varying an axis while holding fixed the resource it shares.
+
+| round | claim | why it was wrong |
+|---|---|---|
+| 2 | `NHID=8` cannot fit | held `NPHASE=2`; the cost is `NSLOT = NPHASE × NHID`. Fits at 21 064. |
+| 1 | `vad` is finished | true of one front end; `vad` has since gained 3.3 |
+| 16 | the mean costs two bands | held `NPHASE=2`/`HACC_W=6`; six bands keep it at 20 927 |
+
+**And the instrument was wrong.** The fp32 headroom probe steered rounds 3–21.
+It answers "what did the front end discard" well and "what can a four-unit
+ternary template use" badly, and the gap between those two questions is the
+difference between +7 and 0. The `mlp4` rung that exposed this took ten minutes
+to add and should have been in the ladder from round 1.
+
+---
+
 ## Round 14 — the accumulator ring, not the hidden units
 
 **Hypothesis.** Round 11 bought the fifth band by dropping `NPHASE` to 1, which
