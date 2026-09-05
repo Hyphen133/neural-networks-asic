@@ -89,7 +89,52 @@ is +0.26 and sheila's is negative — DADS splits are recording-disjoint within
 one corpus, and Speech Commands has a genuine official split, so neither
 carries a cross-corpus or cross-site jump.
 
-## 3. Does validation still *rank* correctly?
+## 3. Validation and test are not the same mixture
+
+Two components of the negative class are **fixed in absolute size**, so they
+occupy a much larger share of the smaller split. Both make validation easier
+than test in a way that has nothing to do with the detector.
+
+**Synthetic silence.** `extract_clips.py:95-104` adds `--silence 2000`
+room-tone negatives and assigns them with `clipset.hash_split`, roughly
+10/10/80. About 202 therefore land in validation and 202 in test *regardless of
+how big either split is*:
+
+| task | silence % of val neg | of test neg | ratio | gap |
+|---|---|---|---|---|
+| vad | 26.6 | 3.8 | **7.0×** | +16.61 |
+| water | 34.5 | 9.0 | 3.8× | +8.66 |
+| clap | 47.5 | 18.1 | 2.6× | +9.05 |
+| catmeow | **67.6** | 33.6 | 2.0× | +7.71 |
+| siren | 27.4 | 21.7 | 1.3× | +9.29 |
+| dogbark | 22.8 | 15.2 | 1.5× | −2.87 |
+| babycry | 23.9 | 20.7 | 1.2× | +0.08 |
+| mosquito | 20.3 | 31.6 | 0.6× | +22.70 |
+
+Two thirds of catmeow's validation negatives are synthetic room tone, against a
+third of its test negatives. Its 94.35 validation AUC is substantially
+measuring "cat versus silence" while its 86.63 test AUC measures "cat versus
+real sound". vad is the starkest ratio at 7×, and it has the second-largest
+gap.
+
+**ESC-50.** The same shape for a different reason: ESC-50 ships 40 clips per
+class over 5 folds, so it contributes an almost constant 48 positives to every
+split while FSD50K scales. ESC-50 positives are 52.2 % of catmeow's validation
+positives but 12.3 % of its test positives; 26.1 % against 4.4 % for clap.
+ESC-50 is clean curated single-source audio, so this pushes the same way.
+
+Neither is the whole story — the ranking is not monotonic (siren has a high gap
+at low enrichment; dogbark a negative gap at 1.5×), and **mosquito runs the
+other way entirely**, with more silence in test than validation and still the
+largest gap. That is independent confirmation that mosquito's gap is site
+shift and not mixture.
+
+But it means part of every reported validation number is a mixture artefact,
+and it is the part that is straightforwardly fixable: scale the silence count
+per split instead of hash-splitting a fixed 2 000, or report validation AUC
+with the synthetic negatives excluded. Not yet done.
+
+## 4. Does validation still *rank* correctly?
 
 A constant offset is harmless if the ordering survives, since only the ordering
 drives selection. Spearman correlation between `val_mean` and `test_mean` over
