@@ -162,6 +162,10 @@ class Data:
         self.raw = d["feats"]                          # (N, T, NB) uint8
         self.labels = d["labels"]
         self.splits = d["splits"]
+        # extract_clips.py --silence writes a NEGATIVE index for each of its
+        # synthetic room-tone negatives (extract_clips.py:103). extract.py
+        # writes no index column at all, hence the guard.
+        self.index = d["index"] if "index" in d.files else None
         self.cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
         if stats:
             # A train/optim/fe_stats.py extraction carries several per-frame
@@ -197,6 +201,15 @@ class Data:
         self.tr = np.where(self.splits == 0)[0]
         self.va = self.splits == 1
         self.te = self.splits == 2
+        # Clips from a real corpus. The synthetic negatives are a fixed 2000
+        # hash-split ~10/10/80, so ~202 land in validation and ~202 in test
+        # whatever the split sizes are -- which makes them a far larger share
+        # of the smaller split (67.6 % of catmeow's validation negatives
+        # against 33.6 % of its test negatives) and inflates validation by an
+        # amount that has nothing to do with the detector. See
+        # docs/val_test_gap.md.
+        self.real = (self.index >= 0) if self.index is not None \
+            else np.ones(len(self.labels), dtype=bool)
         self.feat_max = self.cfg.feat_max
 
     @classmethod
@@ -410,13 +423,21 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
     # says whether the winner was a real late gain or an early fluke that 200
     # draws happened to surface.
     val_final = hist[-1][1] if hist else float("nan")
+    # The same two AUCs with the synthetic room-tone negatives dropped, so both
+    # splits are scored against real audio only. Their difference is the part
+    # of the val-test gap that is mixture rather than detector; comparing it
+    # with (va_auc - te_auc) says how much of the headline gap is an artefact
+    # of a fixed-size easy negative class landing in a small validation split.
+    va_r, te_r = data.va & data.real, data.te & data.real
+    val_nosil = auc(sv[va_r], data.is_pos[va_r]) if va_r.sum() > 4 else float("nan")
+    test_nosil = auc(sv[te_r], data.is_pos[te_r]) if te_r.sum() > 4 else float("nan")
     ops, eph = operating_points(sv[data.te], data.is_pos[data.te], hop,
                                 data.cfg.frame_ms)
     vops, _ = operating_points(sv[data.va], data.is_pos[data.va], hop,
                                data.cfg.frame_ms, (1.0,))
     return dict(cfg=asdict(c), key=c.key(), label=c.label(), seed=c.seed,
                 val_auc=va_auc, test_auc=te_auc, best_epoch=best[2],
-                val_final=val_final,
+                val_final=val_final, val_nosil=val_nosil, test_nosil=test_nosil,
                 centre=int(centre), nwin=len(eval_starts), eph=eph,
                 recall_1fa=ops[1]["recall"], thr=int(np.floor(vops[0]["thr"])),
                 hist=hist, tensors=[t.detach().cpu().numpy() for t in tensors])
@@ -444,6 +465,10 @@ def run_seeds(c: Cfg, seeds, device: str = "cuda") -> dict:
                 # inflation from genuine distribution shift.
                 val_final_mean=float(np.mean([r["val_final"] for r in rs])),
                 best_epoch_mean=float(np.mean([r["best_epoch"] for r in rs])),
+                # Both splits scored against real audio only; the gap between
+                # these two is the honest one. docs/val_test_gap.md 3.
+                val_nosil_mean=float(np.mean([r["val_nosil"] for r in rs])),
+                test_nosil_mean=float(np.mean([r["test_nosil"] for r in rs])),
                 cfg=asdict(c), per_seed=[dict(seed=r["seed"], val=r["val_auc"],
                                               test=r["test_auc"],
                                               final=r["val_final"]) for r in rs])
