@@ -126,9 +126,10 @@ what the front end measures, and the only currency for that is the 536 µm² in
 
 Three subsidiary readings:
 
-* **`vad` is finished.** Chip 63.72 against a headroom of 63.81. The features
-  are the entire limit and there is nothing a classifier can do. Any gain has
-  to come from the front end or not at all.
+* **`vad` is finished** — on *these* features. Chip 63.72 against a headroom of
+  63.81: nothing a classifier can do. That last clause is the load-bearing one
+  and I did not treat it that way at the time; round 9 changes the front end
+  and `vad`'s headroom goes to 69.24.
 * **The ternary H=4 template is already close to an MLP-32** on five of eight
   tasks, and beats the *linear* rung by 2–15 points everywhere. Its four
   hidden units are doing real nonlinear work.
@@ -416,7 +417,45 @@ wants to keep the absolute value of both.
 
 ---
 
-## Round 11 — building the second statistic
+## Round 9 — score every front end that fits, on every task
+
+**Hypothesis.** Rounds 3 and 4 used four pilot tasks. Round 7 says the
+reachable menu is three front ends, all at `STATE_W=9`: `st9` (6 bands, 3 dB),
+`m2st9` (6 bands, 1.5 dB), `nb7st9` (7 bands, 3 dB, needs `NFRAME` ≤ 4). Score
+all three on all eight tasks at `NFRAME` 2, 4 and 8, so the per-task choice is
+made on evidence rather than on the pilots.
+
+**Result.** Best by validation, with the test AUC alongside. **✓** marks the
+row as fitting at that window length — `nb7st9` fails at `NFRAME=8`
+(22 279–22 397) and `m2st9` fails at `NFRAME=16`, so the best-scoring row is
+not always the one that can be built.
+
+| task | chip today | round-1 headroom | best fitting front end | val | test |
+|---|---:|---:|---|---:|---:|
+| `babycry` | 72.36 | 76.60 | `st9` nf8 ✓ | 82.45 | **80.94** |
+| `catmeow` | 79.74 | 83.81 | `st9` nf8 ✓ | 93.03 | **84.87** |
+| `clap` | 72.32 | 74.39 | `nb7st9` nf2 ✓ | 87.35 | **75.92** |
+| `dogbark` | 75.74 | 81.00 | `m2st9` nf8 ✓ | 83.37 | **84.03** |
+| `mosquito` | 62.96 | 65.70 | base nf8 ✓ | 91.67 | **65.70** |
+| `siren` | 76.24 | 81.64 | `m2st9` nf8 ✓ | 89.49 | **83.29** |
+| `vad` | 63.72 | 63.81 | `nb7st9` nf4 ✓ | 84.39 | **68.76** |
+| `water` | 68.92 | 73.48 | `m2st9` nf4 ✓ | 84.20 | **75.81** |
+
+**Every task moves, and `vad` moves most.** Round 1 called `vad` finished —
+chip 63.72 against a headroom of 63.81, the features being the whole limit.
+That was true of the front end round 1 measured and I generalised it past its
+evidence: with `STATE_W=9` and a seventh band, `vad`'s headroom is 69.24, and
+the fitting version is 68.76. The lesson is that "the features are the limit"
+is a statement about one set of features, and the honest way to write it is
+with the geometry attached.
+
+**`mosquito` is the exception and its validation column is a trap.** Every
+front end raises its validation AUC — `m2st9` reaches 92.04 against the
+baseline's 91.67 — and every one of them *lowers* test, `st9` to 59.38 and
+`nb7st9` to 57.53. The HumBugDB split is Tanzanian field sites with unseen
+recording rigs, and a front end tuned to score better in-domain transfers
+worse. Selection is on validation, so a naive pipeline would pick `m2st9`
+here and lose 4.6 points. `mosquito` keeps the shipped front end.
 
 **Hypothesis.** Round 5's `mean` is not buildable: it is an exact per-frame
 average and each band ticks a different number of times per frame
