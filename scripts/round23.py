@@ -33,7 +33,30 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = os.path.join(ROOT, ".venv", "bin", "python")
 ART = os.path.join(ROOT, "artifacts")
 R22 = os.path.join(ART, "optim", "round22.jsonl")
+R0 = os.path.join(ART, "optim", "new_tasks.jsonl")
 OUT = os.path.join(ART, "optim", "round23.jsonl")
+
+
+def round0_val() -> dict[str, float]:
+    """Each detector's validation AUC as it stands today, from docs/new_tasks.md.
+
+    Every round-22 design is built on STATE_W=9 features, and STATE_W=9 is not
+    universally better -- it costs `mosquito` 3.7 validation points. A task
+    whose best new design does not beat what it already has must keep what it
+    already has; "improvement" has to mean better than the incumbent, not
+    better than the other candidates.
+    """
+    out: dict[str, float] = {}
+    with open(R0) as f:
+        for line in f:
+            if line.strip():
+                r = json.loads(line)
+                v = r.get("val_mean")
+                if v is not None:
+                    # new_tasks.jsonl records percentages (75.82); qat and
+                    # round22 record fractions (0.7582). Normalise to fractions.
+                    out[r["task"]] = v / 100.0 if v > 1.0 else v
+    return out
 
 # design -> the RTL parameters that geometry implies. Everything else is the
 # common shape in COMMON.
@@ -89,11 +112,23 @@ def main() -> None:
     args = ap.parse_args()
 
     picks = best_per_task()
+    incumbent = round0_val()
     names = args.tasks or sorted(picks)
     os.makedirs(os.path.join(ART, "headers"), exist_ok=True)
 
     for task in names:
         r = picks[task]
+        base = incumbent.get(task)
+        if base is not None and r["val_mean"] <= base:
+            print(f"\n=== {task}: KEEP round 0. Best new design {r['design']} is "
+                  f"{r['val_mean']*100:.2f} val against the incumbent's "
+                  f"{base*100:.2f} -- not an improvement.", flush=True)
+            with open(OUT, "a") as f:
+                f.write(json.dumps(dict(task=task, design="keep-round0",
+                                        best_new=r["design"],
+                                        best_new_val=r["val_mean"],
+                                        round0_val=base)) + "\n")
+            continue
         d = RTL[r["design"]]
         hdr = os.path.join(ART, "headers", f"ww_weights_{task}.svh")
         print(f"\n=== {task}: design {r['design']} "

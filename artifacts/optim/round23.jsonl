@@ -1,0 +1,1 @@
+{"task": "siren", "design": "A", "stats": "max", "nframe": 8, "nphase": 2, "H": 4, "accw": 6, "val": 87.42, "val_mean": 87.42, "val_std": 0.0, "test": 81.94, "test_mean": 81.94, "header_auc": 81.94, "export_ok": true, "centre": null, "header": "artifacts/headers/ww_weights_siren.svh", "area_um2": 20817, "core_pct": 94.0, "verdict": "FIT", "secs": 36.9}
