@@ -41,8 +41,12 @@ ART = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 # (name, hidden units, depth). depth 0 is a bare linear read-out: the same
 # family the ternary template lives in, only unquantised.
-LADDER = [("linear", 0, 0), ("mlp32", 32, 2), ("mlp64", 64, 2),
-          ("mlp256", 256, 2)]
+LADDER = [("linear", 0, 0), ("mlp4", 4, 2), ("mlp8", 8, 2), ("mlp32", 32, 2),
+          ("mlp64", 64, 2), ("mlp256", 256, 2)]
+# mlp4 matches the chip's NHID=4. It is the rung that says whether a gain seen
+# at mlp32/64 is information the *hardware* classifier could ever use: round 22
+# found the frame mean worth +3 to +7 at mlp64 and +0.4 on the chip, and the
+# question is whether that is quantisation or capacity.
 
 
 def build(nin: int, hidden: int, depth: int, dev) -> nn.Module:

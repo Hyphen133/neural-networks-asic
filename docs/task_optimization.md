@@ -552,6 +552,75 @@ started (`nn_optimization.md` §7). No detector should tape out until it passes.
 
 ---
 
+## Round 22 — score the fitting designs through the chip, and the mean collapses
+
+**Hypothesis.** Five designs survived the area gate and three of them differ in
+`NHID`, `HACC_W` and the window schedule — parameters the fp32 probe does not
+have and cannot rank. Score them through `train/optim/qat.py`, which *is* the
+chip: ternary weights, saturating accumulator, the hardware's window hop.
+
+All candidates are `STATE_W=9 TAP0=3 NBAND=6` on the same `_fin` extraction
+(whose max plane was checked byte-identical to `extract_clips.py` at
+`STATE_W=9`), 4 seeds, ranked by mean validation AUC:
+
+| | geometry | µm² | `babycry` val/test | `siren` val/test |
+|---|---|---:|---|---|
+| **A** | max, nf8, p2, H4, acc6 | 20 993 | **80.12 / 77.59** | **87.57 / 80.90** |
+| **B** | max, nf4, p1, H8, acc6 | 21 064 | 78.46 / 77.55 | 86.55 / 81.09 |
+| **C** | mean×3, nf2, p1, H4, acc6 | 21 801 | 75.75 / 71.90 | 83.17 / 78.27 |
+| **D** | mean×3, nf4, p1, H4, acc5 | 21 604 | 77.37 / 75.87 | 85.52 / 80.30 |
+| **E** | mean×2, nf2, p1, H8, acc5 | 22 020 | 76.16 / 73.24 | 83.72 / 77.99 |
+| **F** | max, nf4, p1, H4, acc5 | 18 063 | — | 85.27 / 79.87 |
+
+**Design F is the control that matters, and it was missing from my first
+attempt at this round.** C, D and E all *add* the mean while *removing*
+something to pay for it — a window phase, half the hidden units, a bit of
+accumulator. Every comparison available without F conflates "does the mean
+help?" with "does what it cost hurt more?". F is D with the mean deleted and
+nothing else changed.
+
+**D − F = +0.25 validation, +0.43 test.** The per-frame mean, which round 5
+measured at +2.4 to +9.0 and which I called the largest effect in this search,
+is worth a quarter of a point to the classifier that actually ships.
+
+---
+
+## Round 24 — why the probe was wrong: capacity, not just quantisation
+
+**Hypothesis.** The fp32 probe's ladder starts at MLP-32. The chip has four
+hidden units. If the mean's value depends on having capacity to spend on it,
+the ladder was answering a question about a model 8× wider than the hardware.
+`probe.py` gains an `mlp4` rung matching `NHID=4`.
+
+**Result** — `siren_fin`, `NFRAME=4`, `NPHASE=1`, the geometry D and F share:
+
+| classifier | max | + mean×3 | gain |
+|---|---:|---:|---:|
+| fp32 MLP-64 | 85.97 | 87.07 | **+1.10** |
+| fp32 MLP-8 | 85.62 | 86.89 | +1.27 |
+| fp32 MLP-4 — the chip's width | 84.44 | 85.09 | **+0.65** |
+| ternary H=4, 5-bit accumulator — the chip | 85.27 | 85.52 | **+0.25** |
+
+**The gain shrinks monotonically as the classifier shrinks toward the
+hardware's.** Roughly half the shortfall is capacity — four units cannot
+exploit three extra features per frame the way sixty-four can — and the rest is
+quantisation.
+
+And note that even MLP-64 sees only +1.10 here, against the +3 to +7 round 5
+measured. That comparison was at `STATE_W=10`; this one is at 9. **`STATE_W=9`
+and the frame mean appear to be substitutes**, both recovering information the
+10-bit max-only front end was throwing away, so their gains do not add.
+
+**The methodological lesson, which is the transferable part of this whole
+document:** an unquantised probe is a sound instrument for *what has the front
+end discarded* and an unreliable one for *what will a four-unit ternary
+template do with it*. The `mlp4` rung should have been in the ladder from round
+1. Reading it at the rung that matches the hardware would have caught this
+fifteen rounds earlier, and rounds 5, 10, 11, 16, 17, 19 and 20 — the entire
+frame-mean line of work — would have been scoped differently.
+
+---
+
 ## Round 6 — is sheila's training recipe wrong for these corpora?
 
 **Hypothesis.** `new_tasks.md` §6 says plainly that "no hyper-parameter search
