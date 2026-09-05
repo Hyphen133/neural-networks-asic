@@ -39,8 +39,27 @@ done
 
 echo
 echo "=== sheila (Speech Commands) ==="
+# Same regression the drone gets: re-extract at the DEFAULT drive with these
+# flags and diff against the shipped features. If this says identical, the only
+# thing separating sheila_nb6 from sheila_g20 is --pdm-gain.
+$PY train/extract.py --targets sheila --tag sheila_regress \
+   --aug 4 --neg-per-word 150 --nstage 9 --state-w 10 \
+   --nband 6 --tap0 3 --mant 1 --feat-w 4 2>&1 | tail -1
+$PY -c "
+import numpy as np
+a=np.load('artifacts/ww_feats_sheila_regress.npz')['feats']
+b=np.load('artifacts/ww_feats_sheila_nb6.npz')['feats']
+print('SHEILA REGRESSION', 'identical' if a.shape==b.shape and (a==b).all() else
+      f'DIFFER {a.shape} vs {b.shape}')"
+# Every front-end flag has to be restated. extract.py's defaults are wwhw's
+# (nstage=11, state_w=15, feat_w=5), NOT the shipped sheila part's, and --aug /
+# --neg-per-word decide the corpus itself -- a first attempt that passed only
+# --nband/--tap0 produced a 12186-clip set at state_w=15 and was thrown away.
+# These are the flags from docs/DESIGN.md that built runs/sheila_nb6.
 [ -f artifacts/ww_feats_sheila_g20.npz ] || \
-  $PY train/extract.py --targets sheila --tag sheila_g20 --nband 6 --tap0 3 \
+  $PY train/extract.py --targets sheila --tag sheila_g20 \
+     --aug 4 --neg-per-word 150 --nstage 9 --state-w 10 \
+     --nband 6 --tap0 3 --mant 1 --feat-w 4 \
      --pdm-gain 2.0 2>&1 | tail -2
 for tag in sheila_nb6 sheila_g20; do
   $PY train/optim/grid.py --tag "$tag" --seeds 6 --note g20-sheila \

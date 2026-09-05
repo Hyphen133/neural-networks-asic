@@ -401,12 +401,22 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
             t.copy_(bv)
     sv = _score_all(fwd, data, c, eval_starts, centre)
     va_auc, te_auc = best[0], auc(sv[data.te], data.is_pos[data.te])
+    # `va_auc` is a MAXIMUM over len(hist) checkpoints, so it is optimistically
+    # biased; `te_auc` is read once, at the checkpoint that maximum chose. Part
+    # of every val-test gap is therefore manufactured by the metric rather than
+    # by distribution shift. Recording the last checkpoint's val AUC makes the
+    # two separable: val_final is unbiased at a checkpoint nothing selected, so
+    # (val_auc - val_final) bounds the max-picking inflation, and best_epoch
+    # says whether the winner was a real late gain or an early fluke that 200
+    # draws happened to surface.
+    val_final = hist[-1][1] if hist else float("nan")
     ops, eph = operating_points(sv[data.te], data.is_pos[data.te], hop,
                                 data.cfg.frame_ms)
     vops, _ = operating_points(sv[data.va], data.is_pos[data.va], hop,
                                data.cfg.frame_ms, (1.0,))
     return dict(cfg=asdict(c), key=c.key(), label=c.label(), seed=c.seed,
                 val_auc=va_auc, test_auc=te_auc, best_epoch=best[2],
+                val_final=val_final,
                 centre=int(centre), nwin=len(eval_starts), eph=eph,
                 recall_1fa=ops[1]["recall"], thr=int(np.floor(vops[0]["thr"])),
                 hist=hist, tensors=[t.detach().cpu().numpy() for t in tensors])
@@ -428,8 +438,15 @@ def run_seeds(c: Cfg, seeds, device: str = "cuda") -> dict:
                 val_max=float(va.max()), test_mean=float(te.mean()),
                 test_std=float(te.std()),
                 test_at_best_val=float(pick["test_auc"]), best_seed=int(pick["seed"]),
+                # Selection diagnostics: val_final is the last checkpoint's val
+                # AUC (nothing selected it), best_epoch says where the winning
+                # checkpoint actually sat. Together they separate max-picking
+                # inflation from genuine distribution shift.
+                val_final_mean=float(np.mean([r["val_final"] for r in rs])),
+                best_epoch_mean=float(np.mean([r["best_epoch"] for r in rs])),
                 cfg=asdict(c), per_seed=[dict(seed=r["seed"], val=r["val_auc"],
-                                              test=r["test_auc"]) for r in rs])
+                                              test=r["test_auc"],
+                                              final=r["val_final"]) for r in rs])
 
 
 # ---------------------------------------------------------------------------
