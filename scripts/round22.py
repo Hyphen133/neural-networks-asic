@@ -47,6 +47,12 @@ DESIGNS = {
     "C": ("max,smean6@3-5", 2, 1, 4, 6, 21801, "TIGHT"),
     "D": ("max,smean6@3-5", 4, 1, 4, 5, 21604, "TIGHT"),
     "E": ("max,smean6@4-5", 2, 1, 8, 5, 22020, "TIGHT"),
+    # F is D with the mean taken away and nothing else changed. Without it the
+    # only comparisons available to the mean are against designs that also
+    # differ in NHID, HACC_W or the window -- D loses to B, but B is
+    # simultaneously twice as wide and a bit deeper in the accumulator, so that
+    # result says nothing about the mean on its own.
+    "F": ("max", 4, 1, 4, 5, 18063, "FIT"),
 }
 TASKS = ["babycry", "catmeow", "clap", "dogbark", "mosquito", "siren", "vad", "water"]
 OUT = os.path.join(ROOT, "artifacts", "optim", "round22.jsonl")
