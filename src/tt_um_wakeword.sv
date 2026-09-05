@@ -275,10 +275,13 @@ module tt_um_wakeword #(
   wire [$clog2(NHID*NFRAME)-1:0] wsel = ($clog2(NHID*NFRAME))'(c_hd*NFRAME + c_slot);
   wire [2*NFEAT-1:0] wrow = WW_ROW[2*NFEAT*wsel +: 2*NFEAT];
 
-  // Feature b of the row: the first NBAND are the frame maxima, the next
-  // NBAND (when NSTAT=2) are the leaky averages, rounded back down to FEAT_W
-  // by the shift the accumulator was scaled up by. Same order as the training
-  // extraction, which lays a frame out band-major as [band][statistic].
+  // Feature b of the row. The statistics of one band are adjacent --
+  // [band0 max, band0 avg, band1 max, band1 avg, ...] -- so band = b / NSTAT
+  // and statistic = b % NSTAT. That is band-major, the same order
+  // train/optim/fe_stats.py writes when it reshapes (frame, band, statistic)
+  // into one row, and getting it wrong mis-decodes every weight silently
+  // rather than failing. The average is rounded back down to FEAT_W by the
+  // shift its accumulator is scaled up by.
   logic signed [HACC_W-1:0] dot;
   always_comb begin
     logic signed [HACC_W-1:0] fc;
