@@ -619,6 +619,52 @@ template do with it*. The `mlp4` rung should have been in the ladder from round
 fifteen rounds earlier, and rounds 5, 10, 11, 16, 17, 19 and 20 — the entire
 frame-mean line of work — would have been scoped differently.
 
+`babycry` is blunter than `siren` about it. At `STATE_W=9`, `NFRAME=4`, the
+mean is **neutral to negative at every capacity**: MLP-64 79.67 → 78.83,
+MLP-8 78.44 → 76.90, MLP-4 77.71 → 77.75. Which points at the real mechanism.
+
+---
+
+## Round 25 — `STATE_W=9` and the frame mean are the same information
+
+**Hypothesis.** Round 5 measured the mean at +3 to +7 on `STATE_W=10` features.
+Round 24 measures it at +1.10 on `STATE_W=9` features with an identical
+classifier. If both changes recover the same discarded information, their gains
+should not add.
+
+**Experiment.** The same comparison at both state widths, same window, same
+classifier. `siren`, `NFRAME=8`, `NPHASE=2`, 3 seeds, validation AUC:
+
+| | max only | + mean (all 6 bands) | mean's gain |
+|---|---:|---:|---:|
+| **MLP-64**, `STATE_W=10` | 86.65 | **90.84** | **+4.19** |
+| **MLP-64**, `STATE_W=9` | 88.62 | 89.11 | **+0.49** |
+| **MLP-4**, `STATE_W=10` | 82.28 | 88.98 | +6.70 |
+| **MLP-4**, `STATE_W=9` | 86.22 | 86.69 | +0.47 |
+
+**Confirmed, and almost completely.** Narrowing the cascade state is worth
++1.97 (MLP-64) or +3.94 (MLP-4) on its own; adding the mean on top of it
+recovers 0.5 more. Read the other way: given the mean, narrowing the state
+*costs* 1.73. The two changes are recovering the same thing.
+
+Why a *narrower* accumulator should preserve more is not something this search
+establishes, and I will not invent a mechanism for it. What is measured is that
+`STATE_W=9` shifts the cascade's operating point relative to the `>> K_SHIFT`
+arithmetic and the `bit_length` feature, and that whatever the 10-bit state was
+losing, both changes recover.
+
+**The design consequence.** The best combination at both capacities is
+`STATE_W=10` **plus** the mean (90.84 / 88.98) — and it does not fit: six bands
+with a mean is 23 699 µm² at best against a 22 150 budget, before the extra
+state bit. The best *fitting* combination is `STATE_W=9` with max alone, which
+is design A. So the frame mean is not merely marginal on the chip; it is
+redundant with a change that is simultaneously **more accurate and 883 µm²
+cheaper**.
+
+That is the honest end of the `AVG_N` line of work: a front-end capability that
+is designed, built, verified bit-exact, proved equivalent when disabled — and
+measured not to be worth enabling.
+
 ---
 
 ## Round 6 — is sheila's training recipe wrong for these corpora?
