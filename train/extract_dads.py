@@ -145,16 +145,18 @@ def decode_all(args, cache_prefix):
 _F = {}
 
 
-def _fe_init(cfg_d, frames, clips_path):
+def _fe_init(cfg_d, frames, clips_path, pdm_gain=0.5):
     _F["cfg"] = wwhw.HWConfig(**cfg_d)
     _F["frames"] = frames
     _F["clips"] = np.load(clips_path, mmap_mode="r")
+    _F["gain"] = pdm_gain
 
 
 def _fe_run(span):
     lo, hi = span
     audio = np.asarray(_F["clips"][lo:hi], dtype=np.float32) / 32768.0
-    return wwhw.frontend_batch(audio, _F["cfg"], n_frames=_F["frames"])
+    return wwhw.frontend_batch(audio, _F["cfg"], n_frames=_F["frames"],
+                               gain=_F["gain"])
 
 
 def main():
@@ -173,6 +175,10 @@ def main():
                          "to cover the same 1 s at any other --frame-log2")
     ap.add_argument("--batch", type=int, default=1024)
     ap.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2))
+    ap.add_argument("--pdm-gain", dest="pdm_gain", type=float, default=0.5,
+                    help="how hard the sigma-delta mic model is driven; see "
+                         "docs/babycry.md. The default drives it at ~0.18 of "
+                         "its usable range and costs ~11 dB of SNR.")
     ap.add_argument("--limit", type=int, default=0, help="debug: only this many clips")
     ap.add_argument("--redecode", action="store_true", help="ignore the clip cache")
     ap.add_argument("--cache-tag", default="",
@@ -213,7 +219,8 @@ def main():
           flush=True)
     t0 = time.time()
     with mp.Pool(args.jobs, initializer=_fe_init,
-                 initargs=(cfg.to_dict(), args.frames, cache_prefix + "_clips.npy")) as pool:
+                 initargs=(cfg.to_dict(), args.frames, cache_prefix + "_clips.npy",
+                           args.pdm_gain)) as pool:
         done = 0
         for span, out in zip(spans, pool.imap(_fe_run, spans)):
             feats[span[0]:span[1]] = out

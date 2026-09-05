@@ -38,6 +38,10 @@ def main():
     ap.add_argument("--neg-per-word", type=int, default=180)
     ap.add_argument("--aug", type=int, default=3, help="jittered copies of each positive")
     ap.add_argument("--batch", type=int, default=1024)
+    ap.add_argument("--pdm-gain", dest="pdm_gain", type=float, default=0.5,
+                    help="how hard the sigma-delta mic model is driven; see "
+                         "docs/babycry.md. The default drives it at ~0.18 of "
+                         "its usable range and costs ~11 dB of SNR.")
     ap.add_argument("--frames", type=int, default=0,
                     help=f"0 = {NFRAME_EXT} at the default frame length, scaled "
                          "to cover the same 1 s at any other --frame-log2")
@@ -94,7 +98,9 @@ def main():
                 x = np.roll(x, int(jit * wwdata.AUDIO_HZ) * (1 if j % 2 else -1))
             audio[j] = x
         audio = peak_normalise(audio)
-        feats[i:i + len(chunk)] = wwhw.frontend_batch(audio, cfg, n_frames=args.frames)
+        feats[i:i + len(chunk)] = wwhw.frontend_batch(audio, cfg,
+                                                      n_frames=args.frames,
+                                                      gain=args.pdm_gain)
         el = time.time() - t0
         done = i + len(chunk)
         print(f"  {done}/{n}  {el:6.0f}s elapsed  eta {el/done*(n-done):6.0f}s", flush=True)
