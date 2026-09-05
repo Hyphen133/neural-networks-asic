@@ -128,6 +128,14 @@ def main():
                          "emitted for a different window length than the features "
                          "were cached with, or WW_ROW is sliced at the wrong stride.")
     ap.add_argument("--nphase", type=int, default=0, help="0 = the extraction's NPHASE")
+    ap.add_argument("--stats", default="",
+                    help="for a train/optim/fe_stats.py extraction, the subset of "
+                         "its per-frame statistics the header was trained on, e.g. "
+                         "max,smean6. The cached cfg records the feature count of "
+                         "the WHOLE extraction, so a header trained on a subset is "
+                         "sliced at the wrong stride without this -- silently, "
+                         "since parse_header infers H from the WW_ROW width and "
+                         "would simply infer a different H.")
     ap.add_argument("--feat-off", type=int, default=FEAT_OFF,
                     help="constant subtracted from each band feature (RTL FEAT_OFF). "
                          "The trainer centres on the training-set mean, which is 6 "
@@ -139,6 +147,16 @@ def main():
     d = np.load(os.path.join(ART, f"ww_feats_{args.tag}.npz"), allow_pickle=True)
     feats, labels, splits = d["feats"], d["labels"], d["splits"]
     cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
+    if args.stats:
+        have = [str(s) for s in d["stats"]]
+        sel = [s.strip() for s in args.stats.split(",") if s.strip()]
+        missing = [s for s in sel if s not in have]
+        if missing:
+            raise SystemExit(f"--stats {missing} not in {args.tag} extraction {have}")
+        nb = cfg.nband // len(have)
+        feats = feats[:, :, [b * len(have) + have.index(s)
+                             for b in range(nb) for s in sel]]
+        cfg.nband = nb * len(sel)
     if args.nframe:
         cfg.nframe = args.nframe
     if args.nphase:

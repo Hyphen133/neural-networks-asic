@@ -89,6 +89,11 @@ def main() -> None:
                "--header", args.out, "--tag", args.tag,
                "--nframe", str(cfg.nframe), "--nphase", str(cfg.nphase),
                "--feat-off", str(best["centre"])]
+        if cfg.stats:
+            # The header was trained on a subset of a multi-statistic
+            # extraction; the chip model has to slice the same columns or the
+            # check silently compares two different feature sets.
+            cmd += ["--stats", cfg.stats]
         if args.set_fpr:
             cmd += ["--set-fpr", str(args.set_fpr)]
         res = subprocess.run(cmd, capture_output=True, text=True)
