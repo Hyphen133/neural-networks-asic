@@ -226,6 +226,54 @@ moves -- `sched=const` makes `epochs` pure duration, and round 6 already swept
 it. Until that is done, "early stopping is refuted" should be read narrowly: a
 *shorter cosine schedule* is worse, which is a different claim.
 
+## Early stopping: we do it, and no better rule exists from validation
+
+`qat.run` keeps the argmax-validation checkpoint and restores it (`qat.py:394`,
+`400-403`), so the model returned is the best one seen rather than the last.
+That is early stopping in the only sense that changes accuracy; patience-based
+termination would save compute and nothing else, since stopping sooner cannot
+beat keeping the best of everything already seen.
+
+There is nonetheless real headroom, because **test peaks about half as early as
+validation**. `train/optim/stoprule.py` records both curves at every checkpoint
+and scores five rules, three seeds, `epochs=1000` (test AUC at the checkpoint
+each rule keeps):
+
+| task | gap | argmax_val | first_99 | first_995 | half_budget | *oracle* |
+|---|---|---|---|---|---|---|
+| mosquito | +22.7 | 64.36 | +2.31 | +1.08 | +2.52 | *+4.93* |
+| siren | +9.3 | 83.76 | +0.64 | 0.00 | +1.14 | *+2.54* |
+| clap | +9.1 | 79.64 | −7.92 | −1.36 | −3.30 | *+4.22* |
+| water | +8.7 | 70.44 | −0.08 | 0.00 | +0.48 | *+3.16* |
+| catmeow | +7.7 | 86.29 | −1.35 | +1.00 | +0.23 | *+1.83* |
+| babycry | +0.1 | 82.44 | +0.19 | −0.27 | +0.24 | *+0.99* |
+| dogbark | −2.9 | 85.04 | −0.26 | −0.11 | +0.20 | *+0.57* |
+| **mean** | | — | **−0.93** | **+0.05** | **+0.21** | ***+2.61*** |
+
+The oracle beats current practice on all seven tasks by 2.61 on average, and
+its margin tracks the domain shift: +4.93 and +4.22 where the gap is largest,
++0.57 and +0.99 where it is smallest. On mosquito test peaks at epoch 277 while
+validation climbs to 630.
+
+No usable rule captures it. `first_995` (+0.05) and `half_budget` (+0.21) are
+indistinguishable from zero, and `first_99` is harmful (−0.93). `half_budget`
+gains on six of seven and only clap's −3.30 drags its mean from +0.80 to +0.21
+-- but choosing a rule per task by consulting test is the leakage the selection
+discipline exists to prevent, so that +0.80 is not bankable.
+
+Stopping on the honest signal does not help either. `Cfg.select="nosil"` picks
+the checkpoint on validation with the synthetic negatives dropped; the two
+criteria correlate 0.87-0.94 across checkpoints and choose the **identical**
+epoch on every task tried. The mixture confound inflates the reported number
+but never corrupted checkpoint selection -- which is worth knowing on its own,
+because it means prior selection work was not damaged by it.
+
+For mosquito, `corr(val_nosil, test_real)` across checkpoints is **+0.083**:
+its validation carries essentially no information about honest test performance
+at any point in training. That is the same in-domain problem as section 2,
+reached from a third direction, and it is why the 2.61 points are reachable
+only by making validation resemble test.
+
 ## What was refuted
 
 **Early stopping as a shorter budget.** Cutting to 400 epochs loses test AUC in

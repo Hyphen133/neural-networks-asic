@@ -95,6 +95,15 @@ class Cfg:
     aug_mix: float = 0.0             # mixup alpha on features (0 = off)
 
     # --- selection / averaging (free) ---
+    select: str = "val"              # val | nosil -- which AUC keeps a checkpoint.
+                                     # "nosil" drops the synthetic room-tone
+                                     # negatives, which are a fixed 2000 clips
+                                     # hash-split ~10/10/80 and so crowd the
+                                     # smaller validation split: two thirds of
+                                     # catmeow's validation negatives are room
+                                     # tone, and they are trivial to reject.
+                                     # Early stopping is only as good as the
+                                     # signal it stops on. docs/val_test_gap.md
     eval_every: int = 5
     ema: float = 0.0                 # 0 = off; else decay on latent weights
 
@@ -399,13 +408,20 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
                         t.copy_(e)
             sv = _score_all(fwd, data, c, eval_starts, centre)
             a = auc(sv[data.va], data.is_pos[data.va])
+            # What actually keeps a checkpoint. `a` stays the full-validation
+            # AUC so `hist` remains comparable across runs; only the criterion
+            # changes. With select="val" this is `a` and nothing differs.
+            a_sel = a
+            if c.select == "nosil":
+                vm = data.va & data.real
+                a_sel = auc(sv[vm], data.is_pos[vm]) if vm.sum() > 4 else a
             if probe is not None:
                 with torch.no_grad():
                     for t, s in zip(tensors, saved):
                         t.copy_(s)
             hist.append((ep + 1, round(a, 5)))
-            if a > best[0]:
-                best = (a, [t.detach().clone() for t in tensors], ep + 1)
+            if a_sel > best[0]:
+                best = (a_sel, [t.detach().clone() for t in tensors], ep + 1)
             if verbose:
                 print(f"  ep {ep+1:4d}  loss {loss.item():.4f}  val AUC {a*100:5.1f}%")
 
@@ -413,7 +429,12 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
         for t, bv in zip(tensors, best[1]):
             t.copy_(bv)
     sv = _score_all(fwd, data, c, eval_starts, centre)
-    va_auc, te_auc = best[0], auc(sv[data.te], data.is_pos[data.te])
+    # Read from the restored checkpoint rather than from best[0], so val_auc is
+    # always the full-validation AUC whatever criterion chose the checkpoint.
+    # With select="val" these are the same weights that produced best[0], so
+    # the number is unchanged.
+    va_auc = auc(sv[data.va], data.is_pos[data.va])
+    te_auc = auc(sv[data.te], data.is_pos[data.te])
     # `va_auc` is a MAXIMUM over len(hist) checkpoints, so it is optimistically
     # biased; `te_auc` is read once, at the checkpoint that maximum chose. Part
     # of every val-test gap is therefore manufactured by the metric rather than
