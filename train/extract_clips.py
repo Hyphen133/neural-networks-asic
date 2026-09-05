@@ -137,6 +137,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, choices=sorted(tasks.TASKS))
     ap.add_argument("--tag", default="", help="feature tag; default = the task name")
+    ap.add_argument("--cache-tag", default="",
+                    help="reuse another tag's decoded 1 s clip cache. A new front "
+                         "end changes only phase 2, so a geometry sweep must not "
+                         "re-decode the corpus once per variant; default = --tag")
     ap.add_argument("--pos-segs", type=int, default=3,
                     help="loudest 1 s windows taken from each positive recording")
     ap.add_argument("--neg-segs", type=int, default=0,
@@ -165,7 +169,7 @@ def main():
                        if cfg.frame_log2 <= wwhw.FRAME_LOG2
                        else NFRAME_EXT >> (cfg.frame_log2 - wwhw.FRAME_LOG2))
     tag = args.tag or args.task
-    cache_prefix = os.path.join(CACHE, f"cache_{tag}")
+    cache_prefix = os.path.join(CACHE, f"cache_{args.cache_tag or tag}")
 
     if args.redecode or not os.path.exists(cache_prefix + "_meta.npz"):
         spec = tasks.TASKS[args.task]
