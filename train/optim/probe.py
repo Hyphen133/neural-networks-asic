@@ -142,14 +142,20 @@ def keep_stats(feats: np.ndarray, d, want: str, cfg):
 
 
 def load(tag: str, nframe: int, dev, norm: str = "none", norm_shift: int = 2,
-         want_stats: str = ""):
+         want_stats: str = "", nphase: int = 0):
     d = np.load(os.path.join(ART, f"ww_feats_{tag}.npz"), allow_pickle=True)
     feats, labels, splits = d["feats"], d["labels"], d["splits"]
     cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
     feats, cfg = keep_stats(feats, d, want_stats, cfg)
+    if nphase:
+        cfg.nphase = nphase
     NF = nframe or cfg.nframe
     if NF > feats.shape[1]:
         raise SystemExit(f"--nframe {NF} > {feats.shape[1]} cached frames")
+    # NPHASE is the number of staggered accumulators, so NFRAME/NPHASE is the
+    # hop between the window positions the chip actually scores. It is the
+    # multiple-instance bag, and the bag has to be the one the hardware scores:
+    # docs/nn_optimization.md measured a denser training grid costing 9 points.
     hop = max(1, NF // cfg.nphase)
     starts = list(range(0, feats.shape[1] - NF + 1, hop))
     X = level_norm(feats.astype(np.float32), norm, norm_shift)
@@ -178,12 +184,17 @@ def main() -> None:
     ap.add_argument("--keep-stats", default="",
                     help="for a fe_stats.py extraction, the subset of its per-frame "
                          "statistics to score, e.g. max,ema3 (default: all of them)")
+    ap.add_argument("--nphase", type=int, default=0,
+                    help="0 = the extraction's NPHASE. Sets the hop between scored "
+                         "window positions to NFRAME/NPHASE, so it must match the "
+                         "geometry being gated, not the one the features were "
+                         "cached with.")
     args = ap.parse_args()
 
     dev = torch.device(args.device)
     Xf, Y, labels, splits, cfg, W = load(args.tag, args.nframe, dev,
                                          args.norm, args.norm_shift,
-                                         args.keep_stats)
+                                         args.keep_stats, args.nphase)
     tr_idx = np.where(splits == 0)[0]
     va, te = splits == 1, splits == 2
     want = set(args.ladder.split(",")) if args.ladder else None
@@ -214,6 +225,7 @@ def main() -> None:
 
     out = dict(tag=args.tag, note=args.note, nframe=args.nframe or cfg.nframe,
                norm=args.norm, norm_shift=args.norm_shift, keep_stats=args.keep_stats,
+               nphase=cfg.nphase,
                nband=cfg.nband, tap0=cfg.tap0, mant=cfg.mant,
                frame_log2=cfg.frame_log2, k_shift=cfg.k_shift,
                seeds=args.seeds, epochs=args.epochs, ladder=rows,
