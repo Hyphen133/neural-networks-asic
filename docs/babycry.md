@@ -7,9 +7,15 @@ sits at **78.54 % test AUC** after the search in
 [task_optimization.md](task_optimization.md). This asks what it would take to
 reach 90 %, and answers it.
 
-**Short answer: no, and the reason is the front end, not the model.** The
-detailed answer is below, because the *shape* of the limit decides what is
-worth trying next.
+**Short answer: not on this chip — but the task itself supports it.** A 16-band
+mel spectrogram of the same clips reaches **94.7 %**, and even a 4-unit
+classifier on mel features reaches 92.3. So the data, the labels and the
+question are all fine; the dyadic front end costs about 14 points and nothing
+affordable recovers them.
+
+That is a different claim from "90 % is unreachable", which is what an earlier
+revision of this document said. The detailed answer is below, because the
+*shape* of the limit decides what is worth trying next.
 
 ## Where the 11.5 points would have to come from
 
@@ -119,6 +125,78 @@ the human-vocalisation set, that the task was deliberately adversarial, and
 that widening the negatives was the only route to 90 %. All three were wrong.
 There is no easier framing left to adopt, and dropping the ambiguous exclusion
 would make the task **harder**, not easier.
+
+## Rounds 4-7 — changing the front end itself
+
+Rounds 1-3 moved parameters *inside* the dyadic cascade. The cascade forces one
+property no parameter can touch: the bands are exactly one octave wide, because
+stage b runs at half the rate of stage b-1 and a band is the difference between
+neighbours. `train/optim/fe_alt.py` builds front ends the chip does not have,
+in the same feature format, so the same validation-selected ladder scores them.
+
+**First, the bound.** Test AUC, `mlp256`, `NFRAME=8`:
+
+| front end | float | through a 4-bit log |
+|---|---:|---:|
+| `mel40` — 40 mel bands | 94.93 | 84.85 |
+| `mel16` | **94.73** | 84.48 |
+| `mel8` | 92.60 | 84.83 |
+| `half` — half-octave, 12 bands | 90.83 | — |
+| `oct1` — **the chip's own filterbank** | 89.89 | 86.44 |
+| `oct2` — 12 dB/oct skirts, ~free | 89.47 | 86.56 |
+| the actual chip | — | **80.98** |
+
+**90 % is achievable on this task.** `mel16` reaches 94.7, and even a 4-unit
+classifier on mel features gets 92.3 — above target. The task, the data and the
+labels are not the limit. The front end is, and it is costing about 14 points.
+
+Two ideas die here. **`oct2` is not better than `oct1`** (89.47 vs 89.89
+float): a second-order difference of the same states, which would have cost one
+subtract and no new state, buys nothing. **`half` buys ~1 point** for double
+the cascade state. And band count saturates early — `mel8`→`mel16` is +2.1,
+`mel16`→`mel40` is +0.2 — so six bands is not what starves this detector.
+
+**Second, where the 14 points actually are.** Adding one impairment at a time
+to `oct1`, on PCM:
+
+| | test | attributable loss |
+|---|---:|---:|
+| `oct1` float | 89.89 | — |
+| + 4-bit log readout | 86.44 | 3.5 |
+| + integer cascade, `in_amp=512` | 86.31 | ~0 |
+| + integer cascade, **`in_amp=64`** (the chip's) | **81.39** | **4.9** |
+
+The last row reproduces the real chip (80.98) to within half a point, so the
+model is faithful *at that operating point*. The 4.9 points are truncation in
+`(x - state) >> K`: three more bits of scale recover essentially all of it.
+
+`IN_AMP = 1 << (STATE_W - 3)`, so `in_amp=512` is `STATE_W=12` — a parameter
+tried only at 9 and 10 in this project. That looked like the largest
+unexploited lever in the design.
+
+**It is not. The gain does not survive real PDM input.** Running the actual
+extractor rather than the PCM model:
+
+| `STATE_W` (real PDM) | val | test |
+|---:|---:|---:|
+| **9 — what ships** | **82.81** | **80.98** |
+| 10 | 77.85 | 76.60 |
+| 11 | 80.25 | 78.34 |
+| 12 | 79.96 | 78.68 |
+
+Every value above 9 is worse, and the curve is not even monotonic. With
+`MANT=1` each `STATE_W` step doubles the band magnitudes and shifts every
+feature by exactly two levels on the 16-level log grid, changing how the
+distribution sits against the clamp and the zero floor; and with a 1-bit input
+the cascade's truncation error plausibly acts as dither that the coarse log
+readout benefits from. Arithmetic precision improves monotonically with
+`STATE_W`; the *feature encoding* does not.
+
+**The methodological lesson.** The PCM model agreed with the chip to 0.4 at
+`in_amp=64` and I took that as validation, then trusted its derivative along a
+new axis. Agreement at one operating point says nothing about the gradient. The
+model was never wrong about PCM — it was answering a question about a different
+input.
 
 ## What would actually be needed
 
