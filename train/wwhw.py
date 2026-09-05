@@ -112,21 +112,52 @@ def pdm_phase_index(n_ticks: int, audio_len: int, cfg: HWConfig = CFG) -> np.nda
     return np.clip(idx, 0, audio_len - 1)
 
 
+def pdm_phase_lerp(n_ticks: int, audio_len: int, cfg: HWConfig = CFG):
+    """Linear-interpolation weights from PDM tick -> a pair of audio samples.
+
+    The zero-order hold above repeats each 16 kHz sample for ~97.7 PDM ticks,
+    which is a staircase: it plants an image of the whole spectrum at every
+    multiple of 16 kHz, shaped by the hold's sinc. A real PDM microphone sees a
+    continuous pressure waveform and produces no such images, so the ZOH is a
+    property of the *simulation* rather than of the part -- and its artifacts
+    land near Nyquist, in the two highest cascade bands.
+
+    Returns (i0, i1, w) with sample = a[i0]*(1-w) + a[i1]*w.
+    """
+    step = AUDIO_HZ / cfg.pdm_hz
+    pos = np.arange(n_ticks, dtype=np.float64) * step
+    i0 = np.clip(pos.astype(np.int32), 0, audio_len - 1)
+    i1 = np.clip(i0 + 1, 0, audio_len - 1)
+    return i0, i1, (pos - i0).astype(np.float32)
+
+
 def pdm_encode_batch(audio: np.ndarray, n_ticks: int, cfg: HWConfig = CFG,
-                     gain: float = 0.5):
+                     gain: float = 0.5, interp: str = "zoh"):
     """Second-order sigma-delta, vectorised over the batch, yielded per tick.
 
     audio: (B, L) float in [-1, 1]. Yields (B,) arrays of +1 / -1 int8.
     A generator so the full B x n_ticks bitstream never has to exist.
+
+    ``interp`` selects how the 16 kHz clip is resampled to the mic's 1.5625 MHz
+    tick rate: "zoh" is what every cached feature set was built with, "linear"
+    is the more faithful stand-in for a real microphone (see pdm_phase_lerp).
+    ``gain`` sets how hard the modulator is driven; the integrators clip at
+    +-3, so the default 0.5 -- on top of a clip already peak-normalised to 0.7
+    and randomly attenuated -- leaves most of the modulator's range unused.
     """
     B = audio.shape[0]
-    idx = pdm_phase_index(n_ticks, audio.shape[1], cfg)
+    lerp = interp == "linear"
+    if lerp:
+        i0x, i1x, wx = pdm_phase_lerp(n_ticks, audio.shape[1], cfg)
+    else:
+        idx = pdm_phase_index(n_ticks, audio.shape[1], cfg)
     i1 = np.zeros(B, dtype=np.float32)
     i2 = np.zeros(B, dtype=np.float32)
     y = np.ones(B, dtype=np.float32)
     a = (audio * gain).astype(np.float32)
     for n in range(n_ticks):
-        x = a[:, idx[n]]
+        x = (a[:, i0x[n]] * (1.0 - wx[n]) + a[:, i1x[n]] * wx[n]) if lerp \
+            else a[:, idx[n]]
         i1 += x - y
         i2 += i1 - y
         np.clip(i1, -3.0, 3.0, out=i1)
@@ -177,7 +208,7 @@ def log_feature_scalar(v: int, mant: int = MANT, feat_max: int = FEAT_MAX) -> in
 
 def frontend_batch(audio: np.ndarray, cfg: HWConfig = CFG,
                    n_frames: int | None = None, gain: float = 0.5,
-                   progress: bool = False) -> np.ndarray:
+                   progress: bool = False, interp: str = "zoh") -> np.ndarray:
     """Run the exact integer front end over a batch of waveforms.
 
     audio: (B, L) float in [-1, 1] at AUDIO_HZ.
@@ -195,7 +226,7 @@ def frontend_batch(audio: np.ndarray, cfg: HWConfig = CFG,
     frame_mask = (1 << cfg.frame_log2) - 1
     taps = [cfg.tap0 + i for i in range(cfg.nband)]
 
-    for n, bit in enumerate(pdm_encode_batch(audio, n_ticks, cfg, gain)):
+    for n, bit in enumerate(pdm_encode_batch(audio, n_ticks, cfg, gain, interp)):
         x = (bit * cfg.in_amp).astype(np.int32)
 
         # Cascade. Stage b is clocked once every 2^b PDM ticks.

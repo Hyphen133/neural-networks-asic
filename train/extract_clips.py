@@ -121,16 +121,19 @@ def decode_all(items, args, cache_prefix):
 _F: dict = {}
 
 
-def _fe_init(cfg_d, frames, clips_path):
+def _fe_init(cfg_d, frames, clips_path, pdm_gain=0.5, pdm_interp="zoh"):
     _F["cfg"] = wwhw.HWConfig(**cfg_d)
     _F["frames"] = frames
     _F["clips"] = np.load(clips_path, mmap_mode="r")
+    _F["gain"] = pdm_gain
+    _F["interp"] = pdm_interp
 
 
 def _fe_run(span):
     lo, hi = span
     audio = np.asarray(_F["clips"][lo:hi], dtype=np.float32) / 32768.0
-    return wwhw.frontend_batch(audio, _F["cfg"], n_frames=_F["frames"])
+    return wwhw.frontend_batch(audio, _F["cfg"], n_frames=_F["frames"],
+                               gain=_F["gain"], interp=_F["interp"])
 
 
 def main():
@@ -159,6 +162,17 @@ def main():
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument("--limit", type=int, default=0, help="debug: only this many clips")
     ap.add_argument("--redecode", action="store_true", help="ignore the clip cache")
+    ap.add_argument("--pdm-gain", dest="pdm_gain", type=float, default=0.5,
+                    help="how hard the sigma-delta mic model is driven. Its "
+                         "integrators clip at +-3 and the clip is already "
+                         "peak-normalised to 0.7 and randomly attenuated, so "
+                         "the default leaves most of the modulator unused.")
+    ap.add_argument("--pdm-interp", dest="pdm_interp", default="zoh",
+                    choices=["zoh", "linear"],
+                    help="16 kHz -> 1.5625 MHz resampling in the mic model. "
+                         "zoh holds each sample for ~97.7 ticks, which images "
+                         "the spectrum at every multiple of 16 kHz; a real mic "
+                         "sees a continuous waveform and does not.")
     for k, dv in GEOMETRY.items():
         ap.add_argument(f"--{k.replace('_', '-')}", dest=k, type=int, default=dv)
     args = ap.parse_args()
@@ -200,7 +214,8 @@ def main():
     t0 = time.time()
     with mp.Pool(args.jobs, initializer=_fe_init,
                  initargs=(cfg.to_dict(), args.frames,
-                           cache_prefix + "_clips.npy")) as pool:
+                           cache_prefix + "_clips.npy",
+                           args.pdm_gain, args.pdm_interp)) as pool:
         done = 0
         for span, out in zip(spans, pool.imap(_fe_run, spans)):
             feats[span[0]:span[1]] = out

@@ -48,7 +48,7 @@ ART = os.path.join(ROOT, "artifacts")
 CACHE = os.path.join(ART, "data")
 
 STATS = ("max", "min", "mean", "last", "ema2", "ema3", "ema4",
-         "smean4", "smean5", "smean6")
+         "smean4", "smean5", "smean6", "amean4", "amean6")
 
 # Subsampled per-frame mean: the buildable version of `mean`.
 #
@@ -66,6 +66,16 @@ STATS = ("max", "min", "mean", "last", "ema2", "ema3", "ema4",
 # constant >> K. In silicon j is a comparison against counter bits that are
 # already there -- wiring, not a shifter -- and the estimate is unbiased.
 SMEAN_K = {"smean4": 4, "smean5": 5, "smean6": 6}
+
+# log(mean |band|) -- the *arithmetic* mean, taken before the log rather than
+# after it. The chain is magnitude -> log -> pool, and because log is monotone
+# the shipped `max` feature is log(max|b|), a peak. `mean` above is
+# mean(log|b|), the *geometric* mean, which every quiet sample in the frame
+# drags toward zero. Neither is average energy. This accumulates raw |band|
+# over 2^K subsampled ticks and takes one log at the end -- which is also
+# cheaper in silicon than the shipped path, since the priority encoder then
+# runs once per frame per band instead of once per tick.
+AMEAN_K = {"amean4": 4, "amean6": 6}
 
 # Leaky-integrator shifts offered as statistics. `mean` is an exact per-frame
 # average and is NOT buildable as it stands: the tick count differs per band
@@ -111,6 +121,14 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
     smean = {k: np.zeros((cfg.nband, B), dtype=np.int32) for k in SMEAN_K}
     sstride = {k: [max(1, 1 << max(0, cfg.frame_log2 - (cfg.tap0 + i) - K))
                    for i in range(cfg.nband)] for k, K in SMEAN_K.items()}
+    # Raw |band| accumulated before the log, so the mean is arithmetic. Same
+    # subsampling as smean, so the sum is over exactly 2^K samples and the
+    # divide is the constant that log(sum) - K would apply -- and a constant
+    # offset in the log domain is absorbed by the classifier's bias, so it is
+    # simply dropped here.
+    amean = {k: np.zeros((cfg.nband, B), dtype=np.int64) for k in AMEAN_K}
+    astride = {k: [max(1, 1 << max(0, cfg.frame_log2 - (cfg.tap0 + i) - K))
+                   for i in range(cfg.nband)] for k, K in AMEAN_K.items()}
     btick = np.zeros(cfg.nband, dtype=np.int64)     # band ticks within the frame
 
     frame_mask = (1 << cfg.frame_log2) - 1
@@ -129,7 +147,11 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
         for i, b in enumerate(taps):
             if n & ((1 << b) - 1):
                 continue
+            mag = np.abs(state[b - 1] - state[b])
             f = wwhw.log_feature(state[b - 1] - state[b], cfg.mant, cfg.feat_max)
+            for k in AMEAN_K:
+                if btick[i] % astride[k][i] == 0:
+                    amean[k][i] += mag
             np.maximum(fmax[i], f, out=fmax[i])
             np.minimum(fmin[i], f, out=fmin[i])
             fsum[i] += f
@@ -158,6 +180,12 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
                 out[:, fr, :, STATS.index(k)] = np.clip(
                     smean[k] >> K, 0, cfg.feat_max).T
                 smean[k][:] = 0
+            for k, K in AMEAN_K.items():
+                # One log at the end, of the accumulated magnitude: this is
+                # log(mean|band|), not mean(log|band|).
+                out[:, fr, :, STATS.index(k)] = wwhw.log_feature(
+                    amean[k] >> K, cfg.mant, cfg.feat_max).T
+                amean[k][:] = 0
             btick[:] = 0
             fmax[:] = 0
             fmin[:] = cfg.feat_max
