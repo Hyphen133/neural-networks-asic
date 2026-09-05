@@ -60,11 +60,16 @@ module tt_um_wakeword #(
 `endif
     parameter MANT         = 1,     // mantissa bits in the log -> 3 dB steps
     parameter FEAT_W       = 4,
-    // Statistics kept per band per frame. 1 = the frame maximum alone, which
-    // is what has always shipped. 2 = the maximum plus the frame *mean* of the
-    // same log feature. The mean is what the maximum throws away, and on the
-    // eight detectors in docs/task_optimization.md it is worth up to +7 test
-    // AUC -- more than every cascade change measured, combined.
+    // How many bands also keep a frame *mean* beside their frame maximum, out
+    // of NBAND, counted from the deepest tap -- i.e. the AVG_N lowest-frequency
+    // bands. 0 is what has always shipped: the maximum alone.
+    //
+    // The mean is what the maximum throws away, and on the eight detectors in
+    // docs/task_optimization.md it is worth up to +7 test AUC, more than every
+    // cascade change measured combined. It is also where the area goes, one
+    // AVG_W accumulator per averaged band, so AVG_N is a parameter rather than
+    // a flag: the mean of the three lowest bands captures most of the gain of
+    // averaging all six, for half the accumulators.
     //
     // An exact mean would need a per-band divisor: band b ticks 2^(FRAME_LOG2-b)
     // times per frame, 8192 at band 3 against 256 at band 8. So sample instead
@@ -80,7 +85,7 @@ module tt_um_wakeword #(
     // A leaky integrator was tried first and is not good enough: it averages
     // over ~2^K ticks rather than over the frame, and at the low bands that is
     // a small fraction of one frame. It recovers about a third of the gain.
-    parameter NSTAT        = 1,
+    parameter AVG_N        = 0,
     parameter AVG_SHIFT    = 6,     // log2 of the samples per band per frame
     parameter NPHASE       = 2,     // staggered windows, hop = NFRAME/NPHASE
     parameter NHID         = 4,     // hidden units; 1 == the old linear template
@@ -114,14 +119,17 @@ module tt_um_wakeword #(
 
   localparam IN_AMP   = 1 << (STATE_W - 3);
   localparam FEAT_MAX = (1 << FEAT_W) - 1;
-  // Features the template reads per frame, and the width of one leaky-average
-  // accumulator: the average is held shifted left by AVG_SHIFT so the >> is
-  // exact and no rounding state is lost between ticks. NAVG is 1 rather than 0
-  // when NSTAT=1 because a zero-length array is not portable; the ring is
+  // Features the template reads per frame: every band's maximum, then the
+  // AVG_N means. AVG_W is one accumulator: 2^AVG_SHIFT samples of at most
+  // FEAT_MAX cannot overflow FEAT_W+AVG_SHIFT bits. NAVG is 1 rather than 0
+  // when AVG_N=0 because a zero-length array is not portable; the ring is
   // unread in that case and synthesis removes it.
-  localparam NFEAT    = NBAND * NSTAT;
+  localparam NFEAT    = NBAND + AVG_N;
   localparam AVG_W    = FEAT_W + AVG_SHIFT;
-  localparam NAVG     = (NSTAT > 1) ? NBAND : 1;
+  localparam NAVG     = (AVG_N > 0) ? AVG_N : 1;
+  // The averaged bands are the last AVG_N the tap loop visits, so the ring
+  // rotates only during those steps and is back in order for the classifier.
+  localparam AVG_STG0 = TAP0 + NBAND - AVG_N;
   localparam FIDX_W   = $clog2(NFRAME);
   localparam HOP      = NFRAME / NPHASE;
   localparam CNT_W    = FRAME_LOG2 + FIDX_W;
@@ -289,13 +297,13 @@ module tt_um_wakeword #(
   wire [$clog2(NHID*NFRAME)-1:0] wsel = ($clog2(NHID*NFRAME))'(c_hd*NFRAME + c_slot);
   wire [2*NFEAT-1:0] wrow = WW_ROW[2*NFEAT*wsel +: 2*NFEAT];
 
-  // Feature b of the row. The statistics of one band are adjacent --
-  // [band0 max, band0 avg, band1 max, band1 avg, ...] -- so band = b / NSTAT
-  // and statistic = b % NSTAT. That is band-major, the same order
-  // train/optim/fe_stats.py writes when it reshapes (frame, band, statistic)
-  // into one row, and getting it wrong mis-decodes every weight silently
-  // rather than failing. The average is rounded back down to FEAT_W by the
-  // shift its accumulator is scaled up by.
+  // Feature b of the row: every band's maximum first, in band order, then the
+  // AVG_N means, also in band order -- [max0..max(NBAND-1), avg of band
+  // NBAND-AVG_N .. avg of band NBAND-1]. The same order train/optim/probe.py
+  // and qat.py build when told `max,smean6@k-l`, and getting it wrong
+  // mis-decodes every weight silently rather than failing. A mean is read as
+  // the top FEAT_W bits of its accumulator, which is the divide by
+  // 2^AVG_SHIFT.
   logic signed [HACC_W-1:0] dot;
   always_comb begin
     logic signed [HACC_W-1:0] fc;
@@ -304,11 +312,8 @@ module tt_um_wakeword #(
     for (int b = 0; b < NFEAT; b++) begin
       logic [1:0] w2;
       w2 = wrow[2*b +: 2];
-      if (NSTAT > 1)
-        fv = (b % NSTAT == 0) ? fmax[b / NSTAT]
-                              : FEAT_W'(favg[b / NSTAT][AVG_W-1 -: FEAT_W]);
-      else
-        fv = fmax[b];
+      fv = (b < NBAND) ? fmax[b]
+                       : FEAT_W'(favg[b - NBAND][AVG_W-1 -: FEAT_W]);
       fc = HACC_W'($signed({1'b0, fv})) - HACC_W'(FEAT_OFF);
       if (w2[0]) dot = w2[1] ? dot - fc : dot + fc;
     end
@@ -380,10 +385,11 @@ module tt_um_wakeword #(
           if (is_tap) begin
             for (i = 0; i < NBAND - 1; i++) fmax[i] <= fmax[i + 1];
             fmax[NBAND-1] <= (casc_due && (feat > fmax[0])) ? feat : fmax[0];
-            if (NSTAT > 1) begin
-              for (i = 0; i < NAVG - 1; i++) favg[i] <= favg[i + 1];
-              favg[NAVG-1] <= (casc_due && avg_due) ? avg_nx : favg[0];
-            end
+          end
+          if (AVG_N > 0 && stg >= STG_W'(AVG_STG0)
+                        && stg < STG_W'(TAP0 + NBAND)) begin
+            for (i = 0; i < NAVG - 1; i++) favg[i] <= favg[i + 1];
+            favg[NAVG-1] <= (casc_due && avg_due) ? avg_nx : favg[0];
           end
           if (casc_last) begin
             if (frame_end) begin
@@ -414,7 +420,7 @@ module tt_um_wakeword #(
           // The mean accumulator is a per-frame statistic like the max, so it
           // clears with it. (The leaky integrator this replaced did not, which
           // is part of why it measured the wrong thing.)
-          if (NSTAT > 1) for (i = 0; i < NAVG; i++) favg[i] <= '0;
+          if (AVG_N > 0) for (i = 0; i < NAVG; i++) favg[i] <= '0;
           if (hold != 0) hold <= hold - 1'b1;
           cnt <= cnt + 1'b1;
           st  <= S_IDLE;

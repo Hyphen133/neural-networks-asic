@@ -57,7 +57,7 @@ IMAGE = os.environ.get("LIBRELANE_IMAGE", "ghcr.io/librelane/librelane:3.0.6")
 DEFAULTS = dict(NSTAGE=9, K_SHIFT=2, STATE_W=10, TAP0=4, NBAND=5, MANT=1,
                 FEAT_W=4, FRAME_LOG2=16, NFRAME=16, NPHASE=2, NHID=4, HACC_W=6,
                 HSHIFT=1, FEAT_OFF=6, SCORE_W=10, DEBUG_PINS=1,
-                NSTAT=1, AVG_SHIFT=3)
+                AVG_N=0, AVG_SHIFT=6)
 
 
 def synth_header(p: dict, seed: int = 0) -> str:
@@ -68,10 +68,10 @@ def synth_header(p: dict, seed: int = 0) -> str:
     """
     rng = random.Random(seed)
     H, NF, hacc = p["NHID"], p["NFRAME"], p["HACC_W"]
-    # One weight per *feature*, not per band: at NSTAT=2 the template reads the
-    # frame maximum and the leaky average of every band, so the row -- and the
-    # adder tree yosys builds from it -- is twice as wide.
-    NB = p["NBAND"] * p["NSTAT"]
+    # One weight per *feature*, not per band: the template reads every band's
+    # frame maximum plus the frame mean of the AVG_N lowest bands, so the row
+    # -- and the adder tree yosys builds from it -- is that much wider.
+    NB = p["NBAND"] + p["AVG_N"]
     code = {0: 0b00, 1: 0b01, -1: 0b11}
 
     rows = []
