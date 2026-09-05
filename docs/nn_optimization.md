@@ -433,6 +433,19 @@ precision; and a 1×2 tile makes the whole question disappear.
 
 ---
 
+## 6a. What the AUC does not say
+
+`docs/robustness.md` takes the §4.6 header apart along the axes AUC hides. The
+short version: 93.67 % is real but its honest interval is 92.2–95.6 (the test
+split's 768 positives are 192 unique clips × 4 jitter copies); at the shipped
+threshold 83 of 141 test speakers never fire; there is no threshold with both
+usable recall and a usable false-alarm rate; and a 3 dB drop in input level
+takes recall from 19.8 % to 3.1 %. None of it changes the §4 ranking — every
+comparison there was made at equal level on the same cached features — but it
+does mean the number is a *relative* result, not a claim that the part works.
+
+---
+
 ## 7. Verification status — one test still fails
 
 `harden_local.sh` signs the new sheila design off clean (§4.7), but the cocotb

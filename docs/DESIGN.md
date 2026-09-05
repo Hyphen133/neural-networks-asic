@@ -553,12 +553,19 @@ netlist against the RTL directly.
 
 ## 10. Limits and what is not established
 
+> Partly superseded by `docs/robustness.md`, which measures the first two of
+> these on the `nn_optim` header. Both came out worse than assumed here: there
+> is no threshold with usable recall *and* a usable false-alarm rate, and the
+> claim below that moderate level changes cancel is wrong — a 3 dB drop takes
+> recall at the shipped threshold from 19.8 % to 3.1 %.
+
 - **Recall at a fixed false-alarm rate is unmeasured.** The test split has
   ~500 isolated-word negatives, which puts the floor at tens of false alarms
   per hour. Nobody has yet run hours of continuous speech, music and room
   noise through the model. The threshold trim exists for exactly this reason.
   The measurement can be done entirely in software, since the Python model is
-  bit-exact with the netlist.
+  bit-exact with the netlist. (6 minutes of room tone now measured —
+  `robustness.md §3`; hours still outstanding.)
 - **No automatic gain control.** The log levels give 3 dB resolution and the
   templates are differences, so moderate level changes cancel, but training
   data was peak-normalised. Distant or very quiet speech will sit below the

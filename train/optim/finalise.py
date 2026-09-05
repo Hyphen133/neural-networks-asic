@@ -82,9 +82,13 @@ def main() -> None:
                shift=cfg.shift, centre=best["centre"], thr=best["thr"])
 
     if not args.skip_verify:
+        # The trainer centres features on the training-set mean, which is 6 for
+        # sheila and drone but not for every corpus; the chip model has to
+        # subtract the same constant or the comparison measures the offset.
         cmd = [sys.executable, os.path.join(TRAIN_DIR, "eval_header.py"),
                "--header", args.out, "--tag", args.tag,
-               "--nframe", str(cfg.nframe), "--nphase", str(cfg.nphase)]
+               "--nframe", str(cfg.nframe), "--nphase", str(cfg.nphase),
+               "--feat-off", str(best["centre"])]
         if args.set_fpr:
             cmd += ["--set-fpr", str(args.set_fpr)]
         res = subprocess.run(cmd, capture_output=True, text=True)
