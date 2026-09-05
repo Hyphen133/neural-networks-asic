@@ -501,6 +501,50 @@ does, barely.
 
 ---
 
+## Round 21 — is the RTL computing what the search measured?
+
+**Why this round exists.** Every accuracy number about the frame mean comes
+from the software model in `train/optim/fe_stats.py`. If the RTL computes
+something else, all of it describes a design that does not exist. That is the
+kind of gap that has bitten this project before: `docs/nn_optimization.md`
+records a testbench that pinned `NBAND=5` while the RTL elaborated 6, and it
+failed two bit-exactness tests against a design that was in fact correct.
+
+**The obstacle.** `test/test.py` answers exactly this question, but it needs
+cocotb, which is not installed and cannot be installed here — no `pip` in the
+venv, no host `iverilog`, and the librelane image has no network. The image
+does carry `iverilog` and `vvp`.
+
+**So the check is a plain Verilog testbench.** `test/tb_favg.v` reads a PDM bit
+stream, runs the design, and prints the `NBAND` frame maxima and `AVG_N` frame
+means at every entry to `S_CLASS`; `train/optim/check_favg.py` generates the
+stimulus, computes the same values with `fe_stats.frontend_stats`, and diffs
+them. `AVG_SHIFT=4` at `FRAME_LOG2=12` rather than 6 at 16, because the
+averaging constraint `TAP0+NBAND-1 ≤ FRAME_LOG2-AVG_SHIFT` has to hold — same
+arithmetic, 16× less simulation.
+
+**Result: 4 frames compared, 0 mismatched.** Both rings, every band, every
+frame.
+
+Two bugs turned up getting there and both were in the checker, which is worth
+recording because either would have produced a *passing-looking* comparison of
+nothing:
+
+* the stimulus was a 1 s enveloped clip, of which the simulated window reaches
+  only the first ~10 ms — so both sides agreed on near-silence;
+* the chip's one-tick input latency was not modelled (it latches `ui_in`
+  mid-period and consumes it on the next), which `test/test.py` handles by
+  prepending a reset tick. `fe_stats.frontend_stats` gained a `bits=` entry
+  point so both sides consume the identical stream.
+
+**What is still unverified.** The *classifier* path at `AVG_N>0` — the adder
+tree reading `NBAND+AVG_N` features — is not simulated, only synthesised.
+`test/test.py:test_detector_matches_model` covers that and cannot run here; it
+was also already failing on the `NFRAME=8` sheila build before this work
+started (`nn_optimization.md` §7). No detector should tape out until it passes.
+
+---
+
 ## Round 6 — is sheila's training recipe wrong for these corpora?
 
 **Hypothesis.** `new_tasks.md` §6 says plainly that "no hyper-parameter search
