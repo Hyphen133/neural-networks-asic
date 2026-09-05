@@ -78,15 +78,22 @@ EMA_SHIFT = {"ema2": 2, "ema3": 3, "ema4": 4}
 
 
 def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
-                   gain: float = 0.5) -> np.ndarray:
-    """(B, L) audio -> (B, n_frames, NBAND, 4) uint8, one plane per statistic.
+                   gain: float = 0.5, bits: np.ndarray | None = None) -> np.ndarray:
+    """(B, L) audio -> (B, n_frames, NBAND, len(STATS)) uint8, one plane each.
 
     The cascade, the band difference and the log feature are character for
     character the ones in ``wwhw.frontend_batch``; only the per-frame
     reduction differs.
+
+    ``bits`` supplies the PDM stream directly as (n_ticks, B) of +-1 instead of
+    modulating ``audio``. train/optim/check_favg.py needs that to feed the RTL
+    and the model the *same* bits, including the leading tick the chip spends
+    on its reset value.
     """
     B = audio.shape[0]
     n_ticks = n_frames << cfg.frame_log2
+    stream = (wwhw.pdm_encode_batch(audio, n_ticks, cfg, gain) if bits is None
+              else iter(bits[:n_ticks]))
     state = np.zeros((cfg.nstage, B), dtype=np.int32)
     out = np.zeros((B, n_frames, cfg.nband, len(STATS)), dtype=np.uint8)
 
@@ -109,7 +116,7 @@ def frontend_stats(audio: np.ndarray, cfg: wwhw.HWConfig, n_frames: int,
     frame_mask = (1 << cfg.frame_log2) - 1
     taps = [cfg.tap0 + i for i in range(cfg.nband)]
 
-    for n, bit in enumerate(wwhw.pdm_encode_batch(audio, n_ticks, cfg, gain)):
+    for n, bit in enumerate(stream):
         x = (bit * cfg.in_amp).astype(np.int32)
         prev = x
         for b in range(cfg.nstage):
