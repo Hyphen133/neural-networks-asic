@@ -579,9 +579,17 @@ accumulator. Every comparison available without F conflates "does the mean
 help?" with "does what it cost hurt more?". F is D with the mean deleted and
 nothing else changed.
 
-**D − F = +0.25 validation, +0.43 test.** The per-frame mean, which round 5
-measured at +2.4 to +9.0 and which I called the largest effect in this search,
-is worth a quarter of a point to the classifier that actually ships.
+**D − F, the frame mean's actual value on the chip:**
+
+| task | D (with mean) | F (without) | difference |
+|---|---|---|---:|
+| `siren` | 85.52 / 80.30 | 85.27 / 79.87 | **+0.25 / +0.43** |
+| `babycry` | 77.37 / 75.87 | 77.88 / 76.17 | **−0.51 / −0.30** |
+
+Positive on one task, negative on the other, both inside the seed spread. The
+per-frame mean — which round 5 measured at +2.4 to +9.0, and which I called the
+largest effect in this search — is **worth nothing to the classifier that
+actually ships**.
 
 ---
 
