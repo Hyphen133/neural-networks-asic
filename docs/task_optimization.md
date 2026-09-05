@@ -35,6 +35,39 @@ whole tile to itself and may pick its own geometry.
 95.9 % core utilisation the shipped part hardens at; see
 [nn_optimization.md](nn_optimization.md) §3).
 
+## Reading order
+
+Sections sit in the order they were written, which is not the order the rounds
+were run — later rounds were often inserted next to the round they corrected.
+By number:
+
+[1](#round-1--where-is-the-headroom-and-does-the-current-design-fit) ·
+[2](#round-2--can-the-classifier-get-wider) ·
+[3](#round-3--which-front-end-axis-is-starving-these-detectors) ·
+[4](#round-4--what-does-the-funding-source-cost) ·
+[5](#round-5--is-a-second-statistic-per-band-worth-more-than-a-seventh-band) ·
+[6](#round-6--is-sheilas-training-recipe-wrong-for-these-corpora) ·
+[7](#round-7--the-affordable-design-space-enumerated) ·
+[8](#round-8--should-the-chip-track-its-own-input-level) ·
+[9](#round-9--score-every-front-end-that-fits-on-every-task) ·
+[10](#round-10--the-obvious-buildable-form-is-the-wrong-statistic) ·
+[11](#round-11--building-the-second-statistic) ·
+[14](#round-14--the-accumulator-ring-not-the-hidden-units) ·
+[16](#round-16--the-frame-mean-made-cheap) ·
+[17](#round-17--five-bands-with-the-mean-is-a-bad-trade) ·
+[19](#round-19--the-mean-only-pays-on-the-low-bands) ·
+[20](#round-20--what-the-whole-box-costs-correctly-this-time) ·
+[21](#round-21--is-the-rtl-computing-what-the-search-measured) ·
+[22](#round-22--score-the-fitting-designs-through-the-chip-and-the-mean-collapses) ·
+[24](#round-24--why-the-probe-was-wrong-capacity-not-just-quantisation) ·
+[25](#round-25--state_w9-and-the-frame-mean-are-the-same-information)
+
+Numbers 12, 13, 15 and 18 were experiments that were superseded before they
+finished and are described inside the rounds that replaced them (12 and 13 by
+20, 15 by 22, 18 inside 17). **If you read one section, read
+[25](#round-25--state_w9-and-the-frame-mean-are-the-same-information); if you
+read two, add [22](#round-22--score-the-fitting-designs-through-the-chip-and-the-mean-collapses).**
+
 ## Rules
 
 * Selection is on **validation only**. Test AUC is recorded and never used to
@@ -351,6 +384,28 @@ is 17 bits per band.
 Also worth recording: `ema3` *alone*, replacing the max rather than joining it,
 is worse than the max alone. The two statistics are complements, not
 substitutes.
+
+---
+
+## Round 11 — building the second statistic
+
+**Hypothesis.** If a second per-frame statistic is worth what round 5 says, it
+needs to exist in the RTL before anything else can be decided about it. One
+more `FEAT_W` register and one more comparator per band — no extra cascade
+stage, no extra decimator, no extra 10-bit state.
+
+**Built**, first as a leaky integrator (`NSTAT`), which round 10 then showed
+was the wrong statistic, and finally as the subsampled frame mean of round 16
+under the parameter `AVG_N`. What survives in the RTL is a second rotating ring
+of `FEAT_W+AVG_SHIFT` accumulators, rotated in lockstep with `fmax` during the
+last `AVG_N` tap steps, cleared with it at the frame boundary, and read as its
+top `FEAT_W` bits.
+
+**Cost, measured.** At `NPHASE=2`/`HACC_W=6` the mean appeared to cost two
+bands — 4-band builds fit at 21 427–22 128 µm², 5-band failed at 23 949, 6-band
+at 26 146. That conclusion was wrong for the same reason round 2's was, and
+round 20 corrects it: with `NPHASE=1` and `HACC_W=5` six bands keep the mean
+comfortably (20 927 µm², FIT).
 
 ---
 
