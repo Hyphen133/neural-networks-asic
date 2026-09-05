@@ -97,14 +97,29 @@ def report(path: str, top: int, sort: str) -> None:
     if not rows:
         print(f"no results in {path}")
         return
+    rows = [r for r in rows if r.get(sort) is not None]
     rows.sort(key=lambda r: -r[sort])
     w = max(len(r["label"]) for r in rows[:top])
-    print(f"{'config':{w}}  {'n':>2}  {'val mean':>8}  {'val sd':>6}  "
-          f"{'test mean':>9}  {'test@best':>9}")
+    # val_nosil / test_nosil drop the synthetic room-tone negatives, which are a
+    # fixed 2000 clips hash-split ~10/10/80 and so take a far larger share of
+    # the smaller validation split. They are the honest pair; `gap` between them
+    # is the honest gap. docs/val_test_gap.md.
+    honest = any(r.get("val_nosil_mean") is not None for r in rows[:top])
+    head = (f"{'config':{w}}  {'n':>2}  {'val mean':>8}  {'val sd':>6}  "
+            f"{'test mean':>9}  {'gap':>6}")
+    if honest:
+        head += f"  {'val real':>8}  {'test real':>9}  {'gap real':>8}"
+    print(head)
     for r in rows[:top]:
-        print(f"{r['label']:{w}}  {r['n']:>2}  {r['val_mean']*100:7.2f}%  "
-              f"{r['val_std']*100:5.2f}%  {r['test_mean']*100:8.2f}%  "
-              f"{r['test_at_best_val']*100:8.2f}%")
+        line = (f"{r['label']:{w}}  {r['n']:>2}  {r['val_mean']*100:7.2f}%  "
+                f"{r['val_std']*100:5.2f}%  {r['test_mean']*100:8.2f}%  "
+                f"{(r['val_mean']-r['test_mean'])*100:+6.2f}")
+        if honest:
+            vn, tn = r.get("val_nosil_mean"), r.get("test_nosil_mean")
+            line += (f"  {vn*100:7.2f}%  {tn*100:8.2f}%  {(vn-tn)*100:+8.2f}"
+                     if vn is not None and tn is not None
+                     else f"  {'--':>8}  {'--':>9}  {'--':>8}")
+        print(line)
 
 
 def main() -> None:
@@ -120,7 +135,12 @@ def main() -> None:
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--sort", default="val_mean",
-                    choices=["val_mean", "val_max", "test_mean", "test_at_best_val"])
+                    choices=["val_mean", "val_max", "test_mean",
+                             "test_at_best_val", "val_nosil_mean"],
+                    help="val_nosil_mean ranks on validation with the synthetic "
+                         "negatives dropped, which is the honest selection "
+                         "signal where they crowd the split -- two thirds of "
+                         "catmeow's validation negatives are room tone")
     args = ap.parse_args()
 
     os.makedirs(OUT, exist_ok=True)
@@ -138,11 +158,34 @@ def main() -> None:
     todo = [c for c in cfgs if f"{c.key()}|{seeds}" not in done]
     print(f"[grid] tag={args.tag} seeds={seeds} configs={len(cfgs)} "
           f"todo={len(todo)} out={os.path.relpath(path)}", flush=True)
+
+    # Which row is this run's baseline. Cfg.key() diffs against the *dataclass
+    # defaults*, not against --base, so a swept value that happens to equal a
+    # default produces the key a defaulted baseline would: sweeping epochs=250
+    # under --base '{"epochs": 1000}' yields key '{"nframe": 8}', which is
+    # indistinguishable from a baseline that never set epochs. If the real
+    # baseline was additionally skipped as already-done, the file then holds no
+    # row that is this run's baseline, and any "compare against the smallest
+    # key" analysis silently compares against the wrong config -- which is how
+    # an aug_time result worth +0.93 was first read as +2.65. Stamping the base
+    # identity on every row makes the comparison unambiguous, and
+    # train/optim/compare.py refuses to guess without it.
+    base_key = base.key()
+    if f"{base_key}|{seeds}" in done:
+        b = done[f"{base_key}|{seeds}"]
+        print(f"[grid] baseline already on file: {b['label'][:56]}  "
+              f"val {b['val_mean']*100:.2f}  test {b['test_mean']*100:.2f}  "
+              f"note={b.get('note','')!r} -- not re-run; compare against this",
+              flush=True)
+    elif not any(c.key() == base_key for c in todo):
+        print(f"[grid] WARNING: base {base_key} is neither queued nor on file; "
+              "no row in this run is the baseline", flush=True)
     t0 = time.time()
     for i, c in enumerate(todo, 1):
         t = time.time()
         r = qat.run_seeds(c, seeds, args.device)
         r["note"] = args.note
+        r["base_key"] = base_key          # what this row should be compared to
         r["secs"] = round(time.time() - t, 1)
         with open(path, "a") as f:
             f.write(json.dumps(r) + "\n")

@@ -198,6 +198,34 @@ search was not chasing validation noise. It degrades on the newer tasks, and
 dogbark at 0.488 means roughly half its ranking is noise — a caution against
 reading small per-task wins there as real.
 
+## The epoch budget is not training length
+
+`best_epoch`, once recorded, shows the winning checkpoint moving with the
+budget rather than sitting at a fixed number of epochs:
+
+| budget | best epoch | ratio |
+|---|---|---|
+| 250 | 193 | 0.77 |
+| 1000 | ~610 | 0.61 |
+| 2000 | 990 | 0.50 |
+| 4000 | 1974 | 0.49 |
+
+The cause is `qat.py:323`: `CosineAnnealingLR(opt, c.epochs)`. The learning-rate
+schedule is *defined by* the epoch budget, so `epochs` sets the annealing rate
+and the duration together. `epochs=250` does not mean "stop early", it means
+"anneal four times faster and then stop".
+
+Every epoch sweep in this project -- round 6's `epochs=400,2000`, and the
+`250/2000/4000` arm here -- has therefore measured the two confounded. The
+conclusion those sweeps support is only that *the schedule length* wants to be
+around 1000-2000; they say nothing clean about stopping early, because no run
+ever trained past its own annealing horizon.
+
+A decoupled test needs the scheduler length pinned while the stopping point
+moves -- `sched=const` makes `epochs` pure duration, and round 6 already swept
+it. Until that is done, "early stopping is refuted" should be read narrowly: a
+*shorter cosine schedule* is worse, which is a different claim.
+
 ## What was refuted
 
 **Early stopping as a shorter budget.** Cutting to 400 epochs loses test AUC in
@@ -232,6 +260,37 @@ AUC — which is what that round was ranked on, and why these were missed:
 than any domain cue, and it is the best single knob found. All of these predate
 `pdm_gain=2.0`, so `scripts/valtest.sh` re-tests them at the corrected drive
 and extends them to mosquito and vad, which round 6 never covered.
+
+## Method fixes this produced
+
+Three of the findings above were only visible because a measurement was wrong
+first, so each one closed with a change to the tooling rather than a note.
+
+**The baseline could be the wrong row.** `qat.Cfg.key()` diffs a config against
+the *dataclass defaults*, not against the sweep's `--base`. Sweeping
+`epochs=250` under `--base '{"epochs": 1000}'` therefore yields the key
+`{"nframe": 8}` -- exactly what a baseline that never set `epochs` produces.
+`grid.py` additionally skips any (config, seed-set) already on file, so the
+real baseline was skipped as already-done and the sweep's own rows contained no
+baseline at all. Differencing against the shortest key then compared every
+variant against `epochs=250`, turning an `aug_time=3` result worth +0.93 into
++2.65 and making nine of ten variants look like wins when most were noise.
+`grid.py` now stamps `base_key` on every row and prints where the baseline came
+from when it declines to re-run it, and `train/optim/compare.py` resolves the
+baseline over the whole file -- never the `--note` subset, since that is
+precisely where a deduplicated baseline will not be -- and **exits rather than
+guessing** when it cannot resolve one.
+
+**Reports showed the inflated numbers.** `grid.py --report` now prints the gap
+and, where the rows carry them, the real-audio pair, and accepts
+`--sort val_nosil_mean` so a search can rank on validation with the synthetic
+negatives removed.
+
+**The trainer discarded its own diagnostics.** `run_seeds` dropped `best_epoch`
+and never computed a val figure that selection had not already maximised. It
+now reports `val_final`, `best_epoch_mean`, `val_nosil_mean` and
+`test_nosil_mean`. The first two are what exposed the schedule confound above;
+the last two are what showed mosquito to be below chance.
 
 ## What cannot be fixed, and what can
 
