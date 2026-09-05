@@ -407,12 +407,97 @@ At `NSTAT=1` the design still synthesises to 1301 cells, 207 flops, 21 857 µm²
 | 5 bands, `NFRAME=4`, `NHID=4`, `NPHASE=1`, K=6 | 22 879 | FAIL |
 | 6 bands, anything | 23 699+ | FAIL |
 
-**Five bands is the ceiling with the mean, six without it.** So the design
-choice is now a genuine three-way trade, and it is per task:
+**Five bands looked like the ceiling with the mean, six without it.** That held
+for about an hour, until round 19 asked a better question.
 
-* **6 bands, max only, `NHID=8`, `NPHASE=1`, `NFRAME=4`** — 21 064, FIT
-* **5 bands, max + mean, `NHID=4`, `NPHASE=1`, `NFRAME=2`** — 21 429–22 037
-* **4 bands, max + mean, `NHID=8`, `NPHASE=1`, `NFRAME=2`** — 21 326
+---
+
+## Round 17 — five bands with the mean is a bad trade
+
+**Hypothesis.** If the mean costs a band, spend it: 5 bands with the mean
+should beat 6 without.
+
+**Refuted, and the reason matters.** On `babycry`, 5 bands at `TAP0=4` with
+`NPHASE=1`: `max` alone scores 78.94 / 78.22 and `max,smean6` scores 78.47 /
+78.16 — **the mean buys nothing once a band has been sold to pay for it**,
+against +3.1 / +6.5 at six bands. Isolating the two changes (round 18, same
+features, `NPHASE` varied alone) shows `NPHASE=1` costs 0.8 val / 2.4 test and
+the mean's gain survives it intact, so it is the lost band, not the window
+schedule.
+
+---
+
+## Round 19 — the mean only pays on the low bands
+
+**Hypothesis.** Six accumulators is what makes the mean cost a band. If the
+mean only carries information in some bands, only those need one. The
+`--keep-stats max,smean6@3-5` syntax added here keeps every band's maximum and
+the mean of a chosen range.
+
+**Confirmed, and the partial version is as good as the whole one.** `NFRAME=4`,
+`NPHASE=2`, val / test:
+
+| statistic | `babycry` | `siren` | `catmeow` |
+|---|---|---|---|
+| `max` | 78.48 / 76.57 | 83.44 / 81.23 | 92.21 / 85.06 |
+| `+ mean, all 6 bands` | 81.59 / **83.08** | 88.68 / 84.93 | 93.33 / 87.14 |
+| `+ mean, bands 3-5` (3 accs) | **81.62** / 81.21 | 86.66 / **85.46** | **93.54** / **87.16** |
+| `+ mean, bands 0-2` (3 accs) | 80.12 / 77.32 | 86.63 / 82.74 | 92.37 / 85.97 |
+| `+ mean, bands 0-1` | 80.04 / 76.58 | 86.24 / 81.63 | 92.97 / 85.03 |
+
+Bands 3–5 are the three *lowest-frequency* bands (taps 6–8, 243–1943 Hz).
+Averaging those three is worth as much as averaging all six, and on `siren`
+and `catmeow` it is better on test. Averaging the three highest instead is
+worth roughly half. The maximum is a good statistic for a transient and a poor
+one for a sustained low-frequency component, which is exactly where these
+detectors' evidence lives.
+
+**So the RTL parameter is `AVG_N`**, not a flag: how many bands, counted from
+the deepest tap, keep a mean beside their maximum. `NSTAT` is gone. At
+`AVG_N=0` the design is proved equivalent to the pre-change RTL by a bounded
+sequential SAT miter (`sat -seq 40 -set-init-zero -verify -prove-asserts`,
+all inputs, from reset) — synthesised area moves by 47 µm² and the flop count
+does not move at all.
+
+---
+
+## Round 20 — what the whole box costs, correctly this time
+
+An earlier gate said 6 bands with any mean fails. It did — at `NPHASE=2` and
+`HACC_W=6`. With the `NPHASE=1` / `HACC_W=5` pair that round 14 had already
+shown to be nearly free, the picture is completely different:
+
+| `NBAND` | `AVG_N` | `NFRAME` | `NHID` | K | synth µm² | verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| 6 | 1 | 2 | 4 | 6 | 18 713 | FIT |
+| 6 | 2 | 2 | 4 | 6 | 20 165 | FIT |
+| 6 | 2 | 4 | 4 | 6 | 20 793 | FIT |
+| 6 | **3** | **2** | 4 | 6 | **20 927** | **FIT** |
+| 6 | 3 | 4 | 4 | 6 | 21 604 | TIGHT |
+| 6 | 4 | 2 | 4 | 5 | 21 990 | TIGHT |
+| 6 | 2 | 2 | **8** | 6 | 22 020 | TIGHT |
+| 6 | 4 | 2 | 4 | 6 | 22 309 | FAIL |
+| 7 | 3 | 2 | 4 | 6 | 22 440 | FAIL |
+| 5 | 3 | 4 | 4 | 6 | 20 588 | FIT |
+
+**Six bands and the mean fit together after all.** The whole "the mean costs
+two bands" conclusion was an artefact of holding `NPHASE=2` and `HACC_W=6`
+fixed while varying the thing under test — the same mistake as round 2, made
+again three rounds after diagnosing it.
+
+`NHID=8` and `AVG_N=3` do not fit together (23 084); `NHID=8` with `AVG_N=2`
+does, barely.
+
+**The candidate designs going into the final comparison**, all
+`STATE_W=9 TAP0=3 NBAND=6`:
+
+| | geometry | µm² |
+|---|---|---:|
+| **A** | max only, `NHID=4`, `NPHASE=2`, `NFRAME=8` (round 9's winner) | 20 993 |
+| **B** | max only, `NHID=8`, `NPHASE=1`, `NFRAME=4` | 21 064 |
+| **C** | `AVG_N=3`, `NHID=4`, `NPHASE=1`, `NFRAME=2` | 20 927 |
+| **D** | `AVG_N=3`, `NHID=4`, `NPHASE=1`, `NFRAME=4` | 21 604 |
+| **E** | `AVG_N=2`, `NHID=8`, `NPHASE=1`, `NFRAME=2` | 22 020 |
 
 ---
 
