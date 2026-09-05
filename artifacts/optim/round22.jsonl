@@ -1,0 +1,1 @@
+{"task": "babycry", "design": "A", "stats": "max", "nframe": 8, "nphase": 2, "H": 4, "accw": 6, "area_um2": 20993, "verdict": "FIT", "val_mean": 0.8011851257961065, "val_std": 0.0018262762885243686, "test_mean": 0.7759351822420004, "test_at_best_val": 0.7739595253231617, "secs": 248.1}
