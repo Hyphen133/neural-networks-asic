@@ -161,12 +161,18 @@ Re-measure at the geometry actually in use, and try every way of paying for it.
 | `r2_h8_st9` | `NHID=8, STATE_W=9` | 1460 | 248 | 25 268 | 114.1 % | **FAIL** |
 | `r2_nphase4` | `NPHASE=4` | 1423 | 256 | 25 357 | 114.5 % | **FAIL** |
 
-**Refuted, decisively.** `NHID=8` costs 4 294 µm² and 50 flops — the hidden
-accumulators are replicated per phase, so eight units at two phases is sixteen
-6-bit saturating accumulators plus sixteen requantisers plus twice the adder
-tree. Halving the bands, halving the window, dropping the debug pins, narrowing
-the score and narrowing the cascade state together do not recover a third of
-it. `NPHASE=4` fails for the same reason from the other direction.
+**Refuted — and the refutation was wrong. See round 14.** `NHID=8` costs
+4 294 µm² and 50 flops at `NPHASE=2`. Halving the bands, halving the window,
+dropping the debug pins, narrowing the score and narrowing the cascade state
+together do not recover a third of it, and `NPHASE=4` fails the same way from
+the other direction.
+
+The correct reading of that table is in the sentence I wrote to explain it and
+then did not act on: *"the hidden accumulators are replicated per phase, so
+eight units at two phases is sixteen 6-bit saturating accumulators."* The cost
+is `NSLOT = NPHASE × NHID`, not `NHID`. Every configuration in this round holds
+`NPHASE=2` and so doubles `NSLOT` along with `NHID`; none of them tests the
+hidden width on its own. Round 14 does, and `NHID=8` fits comfortably.
 
 Two facts worth keeping:
 
@@ -475,3 +481,40 @@ each other and against the six-band max the eight detectors ship with today:
 * 6 bands, max only — today, `NSTAT=1`
 * 4 bands, max + average, `NPHASE=2`, `HACC_W=6`
 * 5 bands, max + average, `NPHASE=1`, `HACC_W=5`
+
+---
+
+## Round 14 — the accumulator ring, not the hidden units
+
+**Hypothesis.** Round 11 bought the fifth band by dropping `NPHASE` to 1, which
+halves `NSLOT = NPHASE × NHID`. That is the same quantity round 2 blamed on
+`NHID`. If `NSLOT` is what costs, then `NHID=8` at `NPHASE=1` has exactly the
+eight accumulators the shipped `NHID=4, NPHASE=2` design already has, and the
+classifier width round 2 declared dead should fit.
+
+**Confirmed.** `TAP0=3 NBAND=6 NSTAT=1`:
+
+| configuration | cells | flops | synth µm² | core | verdict |
+|---|---:|---:|---:|---:|---|
+| `NHID=8 NPHASE=1 NFRAME=2 STATE_W=9` | 1161 | 196 | **20 053** | 90.5 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=9` | 1272 | 198 | **21 064** | 95.1 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=9 HACC_W=5` | 1214 | 190 | **20 218** | 91.3 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=8 STATE_W=9` | 1312 | 200 | 21 443 | 96.8 % | TIGHT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=10` | 1325 | 207 | 22 054 | 99.6 % | TIGHT |
+| `NHID=8 NPHASE=2 NFRAME=8 STATE_W=10` (round 2) | 1509 | 257 | 26 151 | 118.1 % | FAIL |
+
+**`NHID=8` is 4 708 µm² cheaper at `NPHASE=1` than at `NPHASE=2`** — it is
+the ring that costs, and round 2's conclusion was an artefact of never varying
+`NPHASE` with it. Doubling the hidden width is affordable, and it matters:
+round 1 measured a bare linear read-out 7–12 points below an fp32 MLP-32 on
+the same features, with the ternary `H=4` template sitting between them.
+
+**And both large levers fit together.** `NHID=8`, `NSTAT=2`, 4 bands,
+`NPHASE=1`, `HACC_W=5`, `STATE_W=9`, `NFRAME=4`: **21 634 µm², TIGHT** — twice
+the hidden width *and* the per-band average, inside the same tile.
+
+What `NPHASE=1` and `HACC_W=5` cost in accuracy is not something the fp32
+probe can see: `NPHASE` sets the multiple-instance bag the chip scores, and
+`HACC_W` is the saturating accumulator the probe does not have. Both need the
+quantised trainer, which is what the capacity cross-sweep (`H` × `NPHASE` ×
+`HACC_W`, 4 seeds, all eight tasks) measures.
