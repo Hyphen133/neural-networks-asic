@@ -11,10 +11,15 @@ Every candidate is ``STATE_W=9 TAP0=3 NBAND=6``, trained on the same
 and subsampled frame mean), and every one of them fits:
 
     A  max only              NFRAME=8 NPHASE=2 NHID=4 HACC_W=6  20 993  FIT
-    B  max only              NFRAME=4 NPHASE=1 NHID=8 HACC_W=5  21 064  FIT
-    C  max + mean of 3 bands NFRAME=2 NPHASE=1 NHID=4 HACC_W=5  20 927  FIT
+    B  max only              NFRAME=4 NPHASE=1 NHID=8 HACC_W=6  21 064  FIT
+    C  max + mean of 3 bands NFRAME=2 NPHASE=1 NHID=4 HACC_W=6  21 801  TIGHT
     D  max + mean of 3 bands NFRAME=4 NPHASE=1 NHID=4 HACC_W=5  21 604  TIGHT
     E  max + mean of 2 bands NFRAME=2 NPHASE=1 NHID=8 HACC_W=5  22 020  TIGHT
+
+Each design's HACC_W is the widest that fits *that* geometry, measured, not a
+constant carried across: B and C were first written with HACC_W=5 while their
+area had been gated at 6, which would have handicapped exactly the designs
+under test. D cannot have 6 (22 622, FAIL) and keeps 5.
 
 Selection is on validation only; test is recorded and never used to choose.
 Results append to ``artifacts/optim/round22.jsonl`` and a re-run resumes.
@@ -38,8 +43,8 @@ import qat  # noqa: E402
 # name -> (stats, nframe, nphase, NHID, HACC_W, area_um2, verdict)
 DESIGNS = {
     "A": ("max", 8, 2, 4, 6, 20993, "FIT"),
-    "B": ("max", 4, 1, 8, 5, 21064, "FIT"),
-    "C": ("max,smean6@3-5", 2, 1, 4, 5, 20927, "FIT"),
+    "B": ("max", 4, 1, 8, 6, 21064, "FIT"),
+    "C": ("max,smean6@3-5", 2, 1, 4, 6, 21801, "TIGHT"),
     "D": ("max,smean6@3-5", 4, 1, 4, 5, 21604, "TIGHT"),
     "E": ("max,smean6@4-5", 2, 1, 8, 5, 22020, "TIGHT"),
 }
