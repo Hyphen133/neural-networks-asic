@@ -139,10 +139,15 @@ def keep_stats(feats: np.ndarray, d, want: str, cfg):
     # "max@all,smean6@0-2" keeps the max of every band and the mean of bands
     # 0..2 only. Six accumulators is what makes NSTAT=2 cost the sixth band;
     # if the mean only pays on some bands, only those need one.
+    # Statistic-major, matching qat.py, eval_header.py and the RTL: every
+    # band's maximum in band order, then the means. The probe is a
+    # fully-connected net so the order does not change what it scores, but
+    # keeping one order everywhere means a configuration string means the same
+    # thing in all four places.
     idx = []
-    for b in range(nb):
-        for s in sel:
-            name, _, where = s.partition("@")
+    for s in sel:
+        name, _, where = s.partition("@")
+        for b in range(nb):
             if where and where != "all":
                 lo, _, hi = where.partition("-")
                 if not (int(lo) <= b <= int(hi or lo)):

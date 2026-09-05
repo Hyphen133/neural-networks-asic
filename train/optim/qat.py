@@ -170,13 +170,26 @@ class Data:
             # the max and one average, not the whole set the sweep extracted.
             have = [str(s) for s in d["stats"]]
             sel = [s.strip() for s in stats.split(",") if s.strip()]
-            missing = [s for s in sel if s not in have]
+            missing = [s for s in sel if s.partition("@")[0] not in have]
             if missing:
                 raise SystemExit(f"stats {missing} not in {tag} extraction {have}")
             nb = self.cfg.nband // len(have)
-            self.raw = self.raw[:, :, [b * len(have) + have.index(s)
-                                       for b in range(nb) for s in sel]]
-            self.cfg.nband = nb * len(sel)
+            # "max,smean6@3-5" is every band's max plus the mean of bands 3..5,
+            # which is the RTL's AVG_N: only the deepest AVG_N taps carry an
+            # accumulator. Columns come out in the RTL's order -- all the maxima
+            # in band order, then the means in band order -- so a header emitted
+            # from this trains and decodes against the same layout.
+            cols = []
+            for s in sel:
+                name, _, where = s.partition("@")
+                for b in range(nb):
+                    if where and where != "all":
+                        lo, _, hi = where.partition("-")
+                        if not (int(lo) <= b <= int(hi or lo)):
+                            continue
+                    cols.append(b * len(have) + have.index(name))
+            self.raw = self.raw[:, :, cols]
+            self.cfg.nband = len(cols)
         self.dev = torch.device(device)
         self.X = torch.from_numpy(self.raw.astype(np.float32)).to(self.dev)
         self.y = torch.from_numpy((self.labels > 0).astype(np.float32))[:, None].to(self.dev)

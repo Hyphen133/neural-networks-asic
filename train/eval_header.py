@@ -150,13 +150,25 @@ def main():
     if args.stats:
         have = [str(s) for s in d["stats"]]
         sel = [s.strip() for s in args.stats.split(",") if s.strip()]
-        missing = [s for s in sel if s not in have]
+        missing = [s for s in sel if s.partition("@")[0] not in have]
         if missing:
             raise SystemExit(f"--stats {missing} not in {args.tag} extraction {have}")
         nb = cfg.nband // len(have)
-        feats = feats[:, :, [b * len(have) + have.index(s)
-                             for b in range(nb) for s in sel]]
-        cfg.nband = nb * len(sel)
+        # Same order train/optim/qat.py trains in and the RTL reads: every
+        # band's maximum first, then the means of the bands that have one
+        # ("smean6@3-5" = the RTL's AVG_N). Any other order decodes every
+        # weight into the wrong feature without failing.
+        cols = []
+        for s in sel:
+            name, _, where = s.partition("@")
+            for b in range(nb):
+                if where and where != "all":
+                    lo, _, hi = where.partition("-")
+                    if not (int(lo) <= b <= int(hi or lo)):
+                        continue
+                cols.append(b * len(have) + have.index(name))
+        feats = feats[:, :, cols]
+        cfg.nband = len(cols)
     if args.nframe:
         cfg.nframe = args.nframe
     if args.nphase:
