@@ -56,6 +56,9 @@ class Cfg:
 
     # --- data / architecture (costly or near-free in silicon) ---
     tag: str = "sheila_hw"
+    stats: str = ""                  # NSTAT: subset of a fe_stats.py extraction's
+                                     # per-frame statistics, e.g. "max,ema3".
+                                     # "" = whatever the extraction holds.
     H: int = 4                       # NHID          costly
     WL: int = 1                      # 1=ternary 3=int3 7=int4   near-free
     shift: int = 1                   # HSHIFT        free constant
@@ -153,13 +156,27 @@ class Data:
 
     _cache: dict[str, "Data"] = {}
 
-    def __init__(self, tag: str, device: str):
+    def __init__(self, tag: str, device: str, stats: str = ""):
         d = np.load(os.path.join(ART, f"ww_feats_{tag}.npz"), allow_pickle=True)
         self.tag = tag
         self.raw = d["feats"]                          # (N, T, NB) uint8
         self.labels = d["labels"]
         self.splits = d["splits"]
         self.cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
+        if stats:
+            # A train/optim/fe_stats.py extraction carries several per-frame
+            # statistics laid out band-major as [band][statistic]. Keep only the
+            # ones this configuration's silicon computes: an NSTAT=2 build reads
+            # the max and one average, not the whole set the sweep extracted.
+            have = [str(s) for s in d["stats"]]
+            sel = [s.strip() for s in stats.split(",") if s.strip()]
+            missing = [s for s in sel if s not in have]
+            if missing:
+                raise SystemExit(f"stats {missing} not in {tag} extraction {have}")
+            nb = self.cfg.nband // len(have)
+            self.raw = self.raw[:, :, [b * len(have) + have.index(s)
+                                       for b in range(nb) for s in sel]]
+            self.cfg.nband = nb * len(sel)
         self.dev = torch.device(device)
         self.X = torch.from_numpy(self.raw.astype(np.float32)).to(self.dev)
         self.y = torch.from_numpy((self.labels > 0).astype(np.float32))[:, None].to(self.dev)
@@ -170,10 +187,10 @@ class Data:
         self.feat_max = self.cfg.feat_max
 
     @classmethod
-    def get(cls, tag: str, device: str) -> "Data":
-        k = f"{tag}@{device}"
+    def get(cls, tag: str, device: str, stats: str = "") -> "Data":
+        k = f"{tag}|{stats}@{device}"
         if k not in cls._cache:
-            cls._cache[k] = cls(tag, device)
+            cls._cache[k] = cls(tag, device, stats)
         return cls._cache[k]
 
     def starts(self, nframe: int, hop: int) -> list[int]:
@@ -269,7 +286,7 @@ def _score_all(fwd, data: Data, c: Cfg, starts, centre: float) -> np.ndarray:
 
 def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
     """Train one configuration; returns metrics and the selected tensors."""
-    data = Data.get(c.tag, device)
+    data = Data.get(c.tag, device, c.stats)
     torch.manual_seed(c.seed)
     np.random.seed(c.seed)
     gen = torch.Generator(device=data.dev).manual_seed(c.seed + 977)
