@@ -54,7 +54,19 @@ module tt_um_wakeword #(
     parameter NFRAME       = 16,    // 671 ms of integration under one window
 `else
     parameter TAP0         = 3,     // stages 2..8, adding 7.8-15.5 kHz
-    parameter NBAND        = 6,
+    // Five bands, not six. NBAND=6 scores 95.35 % but does not place: 23
+    // fanout-violating nets plus 292 hold buffers do not fit at 81.66 %
+    // utilisation (DPL-0036), and raising MAX_FANOUT_CONSTRAINT to 16 did not
+    // clear it. NBAND is the expensive parameter -- every band is an fmax
+    // register, a cascade tap and a ring slot -- which is why the drone places
+    // comfortably at 79.36 % on five.
+    //
+    // Dropping a band is the cheap way to pay for that; dropping the OCTAVE is
+    // not. Measured at pdm_gain=2.0: TAP0=3/NBAND=5 scores 94.50 %, against
+    // 95.35 % at six bands and 90.60 % on the drone's TAP0=4/NBAND=5. So the
+    // band count is worth 0.85 and the 7.8-15.5 kHz octave is worth 3.9 --
+    // that octave carries the fricative in "sheila" and has to stay.
+    parameter NBAND        = 5,
     parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
     parameter NFRAME       = 8,     // 335 ms, hop 168 ms, five positions
 `endif

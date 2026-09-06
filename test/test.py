@@ -40,7 +40,10 @@ def test_cfg():
     # shortened. nband/tap0/nframe must track the ifdef in
     # src/tt_um_wakeword.sv -- load_weights() slices WW_ROW at a 2*nband stride,
     # so a stale nband mis-decodes every weight silently instead of failing.
-    nband, tap0, nframe = (5, 4, 16) if DRONE else (6, 3, 8)
+    # Sheila moved 6 -> 5 bands so it would place; TAP0 stays 3 because the
+    # octave is worth 3.9 AUC and the band only 0.85. See the ifdef comment in
+    # src/tt_um_wakeword.sv.
+    nband, tap0, nframe = (5, 4, 16) if DRONE else (5, 3, 8)
     return wwhw.HWConfig(frame_log2=FRAME_LOG2, nstage=9, nband=nband, tap0=tap0,
                          state_w=10, mant=1, feat_w=4, nframe=nframe,
                          nphase=NPHASE, score_w=10)
