@@ -1,0 +1,1069 @@
+# Pushing the eight detectors toward 90 %
+
+A 20-round search. Each round states one hypothesis, runs the smallest
+experiment that can refute it, and puts the winning design through
+`train/optim/area_gate.py` — a candidate that does not fit the TinyTapeout 1×1
+IHP tile is not an improvement, whatever it scores.
+
+Companion to [nn_optimization.md](nn_optimization.md), which did this for
+`sheila` and `drone`, and to [new_tasks.md](new_tasks.md), which built the eight
+detectors this document tries to improve.
+
+## Target and start state
+
+The target is **90 % test AUC**. Every task starts below it:
+
+| task | chip AUC at round 0 |
+|---|---:|
+| `catmeow` | 79.74 |
+| `siren` | 76.24 |
+| `dogbark` | 75.74 |
+| `babycry` | 72.36 |
+| `clap` | 72.32 |
+| `water` | 68.92 |
+| `vad` | 63.72 |
+| `mosquito` | 62.96 |
+
+All eight share one geometry — the one that hardened as `runs/sheila_nb6`:
+`NSTAGE=9, TAP0=3, NBAND=6, K_SHIFT=2, STATE_W=10, MANT=1, FEAT_W=4,
+FRAME_LOG2=16, NFRAME=8, NPHASE=2, NHID=4, HACC_W=6, HSHIFT=1, SCORE_W=10`,
+ternary weights, and each is a separate build selected by a weight-header
+`ifdef`, exactly as `sheila` and `drone` already are. So each detector gets the
+whole tile to itself and may pick its own geometry.
+
+**Area budget: 22 150 µm² synthesised** (`area_gate.py` derives it from the
+95.9 % core utilisation the shipped part hardens at; see
+[nn_optimization.md](nn_optimization.md) §3).
+
+## Reading order
+
+Sections sit in the order they were written, which is not the order the rounds
+were run — later rounds were often inserted next to the round they corrected.
+By number:
+
+[1](#round-1--where-is-the-headroom-and-does-the-current-design-fit) ·
+[2](#round-2--can-the-classifier-get-wider) ·
+[3](#round-3--which-front-end-axis-is-starving-these-detectors) ·
+[4](#round-4--what-does-the-funding-source-cost) ·
+[5](#round-5--is-a-second-statistic-per-band-worth-more-than-a-seventh-band) ·
+[6](#round-6--is-sheilas-training-recipe-wrong-for-these-corpora) ·
+[7](#round-7--the-affordable-design-space-enumerated) ·
+[8](#round-8--should-the-chip-track-its-own-input-level) ·
+[9](#round-9--score-every-front-end-that-fits-on-every-task) ·
+[10](#round-10--the-obvious-buildable-form-is-the-wrong-statistic) ·
+[11](#round-11--building-the-second-statistic) ·
+[14](#round-14--the-accumulator-ring-not-the-hidden-units) ·
+[16](#round-16--the-frame-mean-made-cheap) ·
+[17](#round-17--five-bands-with-the-mean-is-a-bad-trade) ·
+[19](#round-19--the-mean-only-pays-on-the-low-bands) ·
+[20](#round-20--what-the-whole-box-costs-correctly-this-time) ·
+[21](#round-21--is-the-rtl-computing-what-the-search-measured) ·
+[22](#round-22--score-the-fitting-designs-through-the-chip-and-the-mean-collapses) ·
+[24](#round-24--why-the-probe-was-wrong-capacity-not-just-quantisation) ·
+[25](#round-25--state_w9-and-the-frame-mean-are-the-same-information)
+
+Numbers 12, 13, 15 and 18 were experiments that were superseded before they
+finished and are described inside the rounds that replaced them (12 and 13 by
+20, 15 by 22, 18 inside 17). **If you read one section, read
+[25](#round-25--state_w9-and-the-frame-mean-are-the-same-information); if you
+read two, add [22](#round-22--score-the-fitting-designs-through-the-chip-and-the-mean-collapses).**
+
+## Rules
+
+* Selection is on **validation only**. Test AUC is recorded and never used to
+  choose a configuration.
+* Every reported design is gated for area at its own geometry. `area_gate.py`
+  pushes its whole `DEFAULTS` dict through `chparam`, which overrides the
+  per-build `ifdef` in `src/tt_um_wakeword.sv`, so every call passes `--set` for
+  the geometry actually being measured.
+* Results append to `artifacts/optim/probe.jsonl` (headroom),
+  `artifacts/optim/area.jsonl` (fit) and `artifacts/optim/new_tasks.jsonl`
+  (finalised detectors).
+
+---
+
+## Round 1 — where is the headroom, and does the current design fit?
+
+**Hypothesis.** Two things are unknown before anything can be optimised: (a)
+whether the eight emitted headers fit the tile at all — `new_tasks.md` §6 says
+the gate was never run on them; and (b) how much of the gap to 90 % is the
+*classifier* and how much is the *front end*. The `ceiling_auc` numbers already
+recorded cannot answer (b): `train/ceiling_probe.py` trains one MLP-64 for a
+fixed 30 epochs, reports it at the **final** epoch with no validation
+selection, and on two tasks the ternary chip model beats it — a ceiling that
+sits below the floor is not measuring capacity, it is measuring overfitting.
+
+**Experiment.**
+
+* `train/optim/area_gate.py` on each of the eight real headers, at
+  `TAP0=3 NBAND=6 NFRAME=8`.
+* A new `train/optim/probe.py`: a capacity ladder (bare linear → MLP-256) on
+  the same cached features and the same multiple-instance pooling, every rung
+  **selected on validation** and reported at that epoch, averaged over 3 seeds.
+  The linear rung matters on its own — the ternary template is a linear form
+  over the same features, so it brackets the design from below.
+
+### 1a — the fit gate
+
+All eight fit. Synthesised area 21 164–21 614 µm² against the 22 150 µm²
+budget, 207 flops each.
+
+| task | cells | synth µm² | est. core util | verdict |
+|---|---:|---:|---:|---|
+| `babycry` | 1235 | 21 164 | 95.5 % | TIGHT |
+| `water` | 1242 | 21 311 | 96.2 % | TIGHT |
+| `mosquito` | 1254 | 21 398 | 96.6 % | TIGHT |
+| `siren` | 1260 | 21 460 | 96.9 % | TIGHT |
+| `clap` | 1265 | 21 496 | 97.0 % | TIGHT |
+| `vad` | 1272 | 21 507 | 97.1 % | TIGHT |
+| `dogbark` | 1279 | 21 606 | 97.5 % | TIGHT |
+| `catmeow` | 1284 | 21 614 | 97.6 % | TIGHT |
+
+TIGHT rather than FIT only because 207 flops exceeds the shipped 205 — the
+same two flops `runs/sheila_nb6` already hardened with at 95.55 % core, 0 DRC,
+0 LVS. The eight differ from each other only in weight density (140–161 of 192
+non-zero), which is worth 450 µm² of adder tree between the lightest and the
+heaviest.
+
+**The headroom above the worst of them is 536 µm².** That is the money
+available for every later round.
+
+### 1b — the honest headroom map
+
+fp32, validation-selected, 3 seeds, on exactly the features the chip sees:
+
+| task | chip | linear | MLP-32 | MLP-64 | MLP-256 | **headroom** | gap |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `catmeow` | 79.74 | 77.79 | 83.25 | 84.22 | 83.81 | **83.81** | +4.1 |
+| `siren` | 76.24 | 79.33 | 81.89 | 82.10 | 81.64 | **81.64** | +5.4 |
+| `dogbark` | 75.74 | 70.26 | 80.96 | 81.34 | 81.00 | **81.00** | +5.3 |
+| `babycry` | 72.36 | 70.00 | 75.13 | 74.63 | 76.60 | **76.60** | +4.2 |
+| `clap` | 72.32 | 57.64 | 69.75 | 72.73 | 74.39 | **74.39** | +2.1 |
+| `water` | 68.92 | 67.26 | 73.48 | 71.98 | 74.06 | **73.48** | +4.6 |
+| `mosquito` | 62.96 | 65.21 | 65.05 | 65.25 | 65.70 | **65.70** | +2.7 |
+| `vad` | 63.72 | 62.18 | 63.52 | 63.93 | 63.81 | **63.81** | +0.1 |
+
+"headroom" is the test AUC of the rung that won on **validation**, so it is
+comparable with the chip column and is not the maximum of the row.
+
+**The result that governs the whole search: not one task can reach 90 % on
+these features.** The best unconstrained fp32 model on the current front end
+tops out at 83.8 % (`catmeow`) and 81.6 % (`siren`). Even a model with 60×
+the parameters, full float precision, no accumulator saturation and no ternary
+quantisation cannot answer these questions better than that from six octave
+bands at 3 dB, 41.9 ms resolution.
+
+So the 90 % target is not a classifier problem. Rounds from here have to change
+what the front end measures, and the only currency for that is the 536 µm² in
+§1a — or area freed elsewhere.
+
+Three subsidiary readings:
+
+* **`vad` is finished** — on *these* features. Chip 63.72 against a headroom of
+  63.81: nothing a classifier can do. That last clause is the load-bearing one
+  and I did not treat it that way at the time; round 9 changes the front end
+  and `vad`'s headroom goes to 69.24.
+* **The ternary H=4 template is already close to an MLP-32** on five of eight
+  tasks, and beats the *linear* rung by 2–15 points everywhere. Its four
+  hidden units are doing real nonlinear work.
+* **`clap` and `mosquito` collapse from validation to test** (86.3→74.4,
+  91.7→65.7) in the fp32 probe exactly as they do on the chip. That is the
+  split doing its job — HumBugDB's unseen Tanzanian field sites, FSD50K's
+  separate eval uploader population — not a modelling failure.
+
+---
+
+## Round 2 — can the classifier get wider?
+
+**Hypothesis.** Round 1 shows the ternary H=4 template sits 2–5 points under an
+fp32 MLP-32 on the same features. `NHID` must be a power of two
+(`c_hd = slot[HD_W-1:0]`), so 4→8 is the only step. It was measured FAIL once
+before, but at `NFRAME=16`, where the weight ROM is twice the size it is now.
+Re-measure at the geometry actually in use, and try every way of paying for it.
+
+**Experiment.** Nine `area_gate.py` runs at `TAP0=3 NBAND=6 NFRAME=8`.
+
+| label | change | cells | flops | synth µm² | core | verdict |
+|---|---|---:|---:|---:|---:|---|
+| `r2_h4_ref` | — (synthetic header, 74 % density) | 1301 | 207 | 21 857 | 98.7 % | TIGHT |
+| `r2_h8` | `NHID=8` | 1509 | 257 | 26 151 | 118.1 % | **FAIL** |
+| `r2_h8_dbg0` | `NHID=8, DEBUG_PINS=0` | 1512 | 259 | 26 173 | 118.2 % | **FAIL** |
+| `r2_h8_sw9` | `NHID=8, SCORE_W=9` | 1506 | 257 | 26 139 | 118.0 % | **FAIL** |
+| `r2_h8_sw9_dbg0` | both | 1504 | 259 | 26 160 | 118.1 % | **FAIL** |
+| `r2_h8_nb5` | `NHID=8, NBAND=5` | 1407 | 253 | 25 099 | 113.3 % | **FAIL** |
+| `r2_h8_nf4` | `NHID=8, NFRAME=4` | 1388 | 255 | 25 068 | 113.2 % | **FAIL** |
+| `r2_h8_st9` | `NHID=8, STATE_W=9` | 1460 | 248 | 25 268 | 114.1 % | **FAIL** |
+| `r2_nphase4` | `NPHASE=4` | 1423 | 256 | 25 357 | 114.5 % | **FAIL** |
+
+**Refuted — and the refutation was wrong. See round 14.** `NHID=8` costs
+4 294 µm² and 50 flops at `NPHASE=2`. Halving the bands, halving the window,
+dropping the debug pins, narrowing the score and narrowing the cascade state
+together do not recover a third of it, and `NPHASE=4` fails the same way from
+the other direction.
+
+The correct reading of that table is in the sentence I wrote to explain it and
+then did not act on: *"the hidden accumulators are replicated per phase, so
+eight units at two phases is sixteen 6-bit saturating accumulators."* The cost
+is `NSLOT = NPHASE × NHID`, not `NHID`. Every configuration in this round holds
+`NPHASE=2` and so doubles `NSLOT` along with `NHID`; none of them tests the
+hidden width on its own. Round 14 does, and `NHID=8` fits comfortably.
+
+Two facts worth keeping:
+
+* `DEBUG_PINS=0` makes area **worse** (+22 µm², +2 flops), for the third time
+  in this project. Driving pins low is not free; the debug muxes are cheaper
+  than the constant drivers that replace them.
+* `STATE_W` 10→9 is worth **883 µm² and 9 flops**. That is the largest single
+  saving found anywhere so far, it is bigger than the 536 µm² of headroom in
+  §1a, and it is the obvious way to pay for a front-end change. What it costs
+  in accuracy is unmeasured on these eight tasks.
+
+**Conclusion after two rounds.** The classifier cannot get wider and, per round
+1, could not reach 90 % even if it did. The search now goes entirely to the
+front end, funded by `STATE_W=9` if the accuracy cost is acceptable.
+
+---
+
+## Round 3 — which front-end axis is starving these detectors?
+
+**Hypothesis.** Five candidate changes to what the front end measures, each
+plausible on its own grounds, probed on four pilot tasks spanning the range
+(`catmeow` best, `siren`/`dogbark` mid, `water` low-but-with-headroom):
+
+| | change | why |
+|---|---|---|
+| `k3` | `K_SHIFT` 2→3 | moves the six octaves from 243 Hz–15.5 kHz down to 121 Hz–7.8 kHz. The corpora are 16 kHz sources, so today's top band is mostly above the content. |
+| `nb7` | `NBAND` 6→7 | keeps all six and adds 121–243 Hz underneath (`NSTAGE` 9→10). |
+| `m2` | `MANT` 1→2 | 1.5 dB log steps instead of 3 dB (`FEAT_W` 4→5). |
+| `fl15` | `FRAME_LOG2` 15 | 21 ms frames: twice the time resolution. |
+| `fl17` | `FRAME_LOG2` 17 | 84 ms frames: half the resolution, twice the span. |
+
+plus a free control — probe the *unchanged* features over other window lengths
+(`NFRAME` 2, 4, 16, 24), which costs only weight ROM.
+
+`train/extract_clips.py` gained `--cache-tag` for this, so a geometry sweep
+re-runs only the front end and never re-decodes a corpus.
+
+**Result.** Validation AUC (the selection criterion), best rung of an
+MLP-32/64 ladder, 2 seeds. Baseline is the shipped geometry at `NFRAME=8`.
+
+| variant | `catmeow` | `siren` | `dogbark` | `water` |
+|---|---:|---:|---:|---:|
+| baseline | 92.29 | 86.67 | 79.29 | 78.89 |
+| `k3` | 93.12 | 86.89 | **83.05** | **84.09** |
+| `nb7` | 92.93 | 88.74 | 80.57 | 80.09 |
+| `m2` | 92.91 | **88.83** | 80.14 | 80.68 |
+| `fl15` @ `NFRAME`=16 | **93.38** | 87.33 | 80.00 | 81.12 |
+| `fl17` | 92.60 | 88.37 | 78.07 | 81.55 |
+| `NFRAME`=16 | 92.00 | 88.49 | 78.59 | 81.79 |
+| `NFRAME`=24 | 91.65 | 89.04 | 78.81 | 82.36 |
+
+**Every axis is worth about a point, and which axis is strongly per-task.**
+`K_SHIFT=3` is the best change available to `dogbark` (+3.8) and `water`
+(+4.2) and the worst available to `catmeow` on test (80.74 against a baseline
+84.22) — a dog's bark and running water live in the octaves `k3` moves the
+bands onto, a cat's meow does not. Since each detector is already its own
+build, that is a per-task choice, not a compromise.
+
+**The subsidiary result turned out to matter more than the main one.** The
+free window-length control found `NFRAME=4` scoring as well as `NFRAME=8` on
+`catmeow` (test 85.06 vs 84.22) and `babycry` (76.25 vs 76.60) — at half the
+weight ROM. That reopened the area question and produced round 7.
+
+Area, measured alongside: `K_SHIFT=3` +58 µm², `FRAME_LOG2=15` +58,
+`FRAME_LOG2=17` −66, `MANT=2` +809 (FAIL alone), `NFRAME=16` +740 (FAIL
+alone), `NBAND=7` +1620 (FAIL, and still FAIL with `STATE_W=9`).
+
+---
+
+## Round 4 — what does the funding source cost?
+
+**Hypothesis.** `STATE_W` 10→9 frees 883 µm², more than the 536 µm² of
+headroom in §1a, and is the only way to pay for `MANT=2` or `NFRAME=16`. But
+it narrows the cascade state, and its accuracy cost has never been measured on
+anything. If it costs more than `MANT=2` gains, the branch is dead.
+
+**Experiment.** Extract `st9` alone and each affordable stack, probe at the
+window lengths that fit.
+
+**Result — `STATE_W=9` is not a cost. It is a gain, on every task tried.**
+
+| | baseline | `st9` | `m2st9` | `fl15st9` | `fl15m2st9` |
+|---|---:|---:|---:|---:|---:|
+| `catmeow` | 92.29 | 94.43 | 92.96 | 93.67 | **94.61** |
+| `siren` | 86.67 | **90.14** | 89.49 | 88.58 | 89.04 |
+| `dogbark` | 79.29 | 83.74 | 83.37 | 83.88 | **84.32** |
+| `water` | 78.89 | **85.74** | 82.77 | 84.34 | 83.51 |
+
+(validation AUC; `st9`, `fl15st9` and `fl15m2st9` at `NFRAME=16`, the rest at 8.)
+
+A narrower cascade state regularises: 9 bits still resolves every band the log
+feature can encode, and the extra bit was only carrying dither. The gain is
++2.1 to +6.9 validation points for −883 µm².
+
+**But the best-by-validation stacks do not fit.** `NFRAME=16` was never gated
+in round 3, and when it was: `NFRAME=16, MANT=2, STATE_W=9` is 22 666 µm²
+(fl16) or 22 488 (fl15), both over the 22 150 budget. `NFRAME=16` with
+`MANT=1` and `STATE_W=9` fits at 21 690 (fl16) and 21 507 (fl15). So the
+fitting winners are `st9` for `catmeow`, `siren` and `water`, and `fl15st9`
+for `dogbark` — `MANT=2` is affordable only at `NFRAME` ≤ 8.
+
+---
+
+## Round 5 — is a second statistic per band worth more than a seventh band?
+
+**Hypothesis.** The front end keeps exactly one number per band per frame: the
+maximum log magnitude over 41.9 ms. Everything else the band did is discarded.
+A second statistic costs one more `FEAT_W` register and one more comparator
+per band — no extra cascade stage, no extra decimator, no extra 10-bit state —
+which is far cheaper than `NBAND=7`'s +1620 µm². Three candidates: `max,min`
+(modulation depth — a transient against a steady tone), `max,mean` (average
+energy), `max,min,mean`.
+
+`train/optim/fe_stats.py` runs the same bit-exact cascade as
+`wwhw.frontend_batch` and records all four statistics; its `max` plane was
+checked **byte-identical** to `extract_clips.py`'s output on `catmeow` before
+the round was run.
+
+**Result — this is the largest effect in the whole search.**
+
+Test AUC, best rung by validation, at the window length that won:
+
+| task | baseline | `max,min` | `max,mean` | `max,min,mean` |
+|---|---:|---:|---:|---:|
+| `babycry` | 74.63 | 75.68 | **83.67** | 84.59 |
+| `catmeow` | 84.22 | 84.97 | **87.66** | 87.75 |
+| `siren` | 82.10 | 82.15 | **86.98** | 86.82 |
+| `dogbark` | 81.34 | 80.70 | **83.68** | 84.64 |
+| `water` | 71.98 | 71.13 | **75.09** | 77.26 |
+| `clap` | 72.73 | 72.65 | **75.14** | 74.40 |
+
+**It is specifically the average, not "a second number".** `max,min` is worth
+nothing at all — on three of six tasks it is *worse* than one statistic — while
+`max,mean` is worth +2.4 to +9.0 test AUC. And `max,min,mean` is not reliably
+better than `max,mean`, so the min carries no information the other two lack:
+the frame minimum is the band's quiet floor, dominated by which decimation
+phase the frame boundary lands on.
+
+For scale: the mean is worth more on `babycry` alone (+9.0) than every cascade
+change in rounds 3 and 4 combined, on any task.
+
+**Caveat that rounds 10 and 16 exist to settle:** `mean` as measured is an
+exact per-frame average, and each band ticks a different number of times per
+frame (2^(`FRAME_LOG2`−b)), so an exact mean needs a per-band divisor. It is
+not buildable as it stands.
+
+---
+
+## Round 10 — the obvious buildable form is the wrong statistic
+
+**Hypothesis.** Replace the exact mean with a leaky integrator, `favg +=
+(feat − favg) >> K`: one accumulator and one shift per band, the same
+arithmetic the cascade already does `NSTAGE` times per tick. If `emaK`
+reproduces `mean`'s gain, round 5 is buildable as it stands.
+
+**Refuted.** On `babycry`, best rung by validation, val / test:
+
+| statistic | val | test |
+|---|---:|---:|
+| `max` (control, reproduces round 1) | 78.48 | 76.57 |
+| `max,ema2` | 78.92 | 76.40 |
+| `max,ema3` | 79.51 | 76.98 |
+| `max,ema4` | 80.01 | 78.73 |
+| `max,mean` | **83.61** | **83.63** |
+| `ema3` alone | 71.98 | 72.13 |
+
+The leaky integrator recovers about a third of the gain, and it rises
+monotonically with K. That monotonicity is the diagnosis: `emaK` averages over
+roughly 2^K ticks, and a frame is 2^(`FRAME_LOG2`−b) ticks — 8 192 at band 3.
+At K=4 the integrator is measuring a sixteenth of a frame at the lowest band.
+**The average that matters spans the frame**, and no fixed shift gets there:
+K large enough for band 3 needs the accumulator held at `FEAT_W`+13 bits, which
+is 17 bits per band.
+
+Also worth recording: `ema3` *alone*, replacing the max rather than joining it,
+is worse than the max alone. The two statistics are complements, not
+substitutes.
+
+---
+
+## Round 11 — building the second statistic
+
+**Hypothesis.** If a second per-frame statistic is worth what round 5 says, it
+needs to exist in the RTL before anything else can be decided about it. One
+more `FEAT_W` register and one more comparator per band — no extra cascade
+stage, no extra decimator, no extra 10-bit state.
+
+**Built**, first as a leaky integrator (`NSTAT`), which round 10 then showed
+was the wrong statistic, and finally as the subsampled frame mean of round 16
+under the parameter `AVG_N`. What survives in the RTL is a second rotating ring
+of `FEAT_W+AVG_SHIFT` accumulators, rotated in lockstep with `fmax` during the
+last `AVG_N` tap steps, cleared with it at the frame boundary, and read as its
+top `FEAT_W` bits.
+
+**Cost, measured.** At `NPHASE=2`/`HACC_W=6` the mean appeared to cost two
+bands — 4-band builds fit at 21 427–22 128 µm², 5-band failed at 23 949, 6-band
+at 26 146. That conclusion was wrong for the same reason round 2's was, and
+round 20 corrects it: with `NPHASE=1` and `HACC_W=5` six bands keep the mean
+comfortably (20 927 µm², FIT).
+
+---
+
+## Round 16 — the frame mean, made cheap
+
+**Hypothesis.** Keep the frame mean and make the *sample count* the thing that
+is constant, instead of the tick count. Take exactly 2^K samples per band per
+frame by accumulating only every 2^j-th tick of band b, with
+`j = FRAME_LOG2 − b − K`. Then the accumulator is `FEAT_W+K` bits for every
+band and the divide is a constant `>> K`.
+
+The reason this is nearly free is a coincidence of the framing. Band b is due
+when `cnt[b-1:0]` is zero; "every 2^j-th tick of band b" is
+`cnt[b+j-1:b] == 0`; and `b+j-1 = FRAME_LOG2 − K − 1` **independently of b**.
+Combining the two, the sampling instant is just
+
+    cnt[FRAME_LOG2-AVG_SHIFT-1:0] == 0
+
+— one AND over counter bits that already exist, shared across the whole ring.
+Checked exhaustively over a frame: the shared test selects exactly the same
+ticks as the per-band stride, 64 samples per band at K=6, for every band.
+
+**Result.** `smeanK` recovers most of what the exact mean is worth, and more of
+it on test than on validation:
+
+| statistic | `babycry` val | test | `siren` val | test |
+|---|---:|---:|---:|---:|
+| `max` | 78.48 | 76.57 | 86.53 | 82.02 |
+| `max,ema4` | 80.01 | 78.73 | 88.86 | 84.45 |
+| `max,smean4` | 80.62 | 81.11 | 89.31 | 84.99 |
+| `max,smean5` | 81.36 | 81.17 | 90.85 | 84.37 |
+| `max,smean6` | **81.59** | **83.08** | **91.31** | **85.47** |
+| `max,mean` (not buildable) | 83.61 | 83.63 | 92.19 | 86.88 |
+
+`smean6` captures **6.5 of the 7.1 test points** on `babycry` and 3.5 of 4.9 on
+`siren`, against `ema4`'s 2.2 and 2.4. So the round 5 result survives into
+something that can be built.
+
+**The RTL** (`NSTAT=2`, `AVG_SHIFT=6`) is a second rotating ring of
+`FEAT_W+AVG_SHIFT` = 10-bit accumulators, gated by the shared sample enable,
+cleared at the frame boundary with `fmax`, and read as its top `FEAT_W` bits.
+At `NSTAT=1` the design still synthesises to 1301 cells, 207 flops, 21 857 µm²
+— unchanged from before any of this.
+
+**What it costs: the sixth band, and then some.** With 10-bit accumulators:
+
+| geometry (`STATE_W=9`) | synth µm² | verdict |
+|---|---:|---|
+| 4 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1` | 19 643 | FIT |
+| 4 bands, `NFRAME=4`, `NHID=4`, `NPHASE=1` | 20 390 | FIT |
+| 4 bands, `NFRAME=2`, **`NHID=8`**, `NPHASE=1` | 21 326 | TIGHT |
+| 5 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1`, K=4 | 21 429 | TIGHT |
+| 5 bands, `NFRAME=2`, `NHID=4`, `NPHASE=1`, K=6 | 22 037 | TIGHT |
+| 5 bands, `NFRAME=4`, `NHID=4`, `NPHASE=1`, K=6 | 22 879 | FAIL |
+| 6 bands, anything | 23 699+ | FAIL |
+
+**Five bands looked like the ceiling with the mean, six without it.** That held
+for about an hour, until round 19 asked a better question.
+
+---
+
+## Round 17 — five bands with the mean is a bad trade
+
+**Hypothesis.** If the mean costs a band, spend it: 5 bands with the mean
+should beat 6 without.
+
+**Refuted, and the reason matters.** On `babycry`, 5 bands at `TAP0=4` with
+`NPHASE=1`: `max` alone scores 78.94 / 78.22 and `max,smean6` scores 78.47 /
+78.16 — **the mean buys nothing once a band has been sold to pay for it**,
+against +3.1 / +6.5 at six bands. Isolating the two changes (round 18, same
+features, `NPHASE` varied alone) shows `NPHASE=1` costs 0.8 val / 2.4 test and
+the mean's gain survives it intact, so it is the lost band, not the window
+schedule.
+
+---
+
+## Round 19 — the mean only pays on the low bands
+
+**Hypothesis.** Six accumulators is what makes the mean cost a band. If the
+mean only carries information in some bands, only those need one. The
+`--keep-stats max,smean6@3-5` syntax added here keeps every band's maximum and
+the mean of a chosen range.
+
+**Confirmed, and the partial version is as good as the whole one.** `NFRAME=4`,
+`NPHASE=2`, val / test:
+
+| statistic | `babycry` | `siren` | `catmeow` |
+|---|---|---|---|
+| `max` | 78.48 / 76.57 | 83.44 / 81.23 | 92.21 / 85.06 |
+| `+ mean, all 6 bands` | 81.59 / **83.08** | 88.68 / 84.93 | 93.33 / 87.14 |
+| `+ mean, bands 3-5` (3 accs) | **81.62** / 81.21 | 86.66 / **85.46** | **93.54** / **87.16** |
+| `+ mean, bands 0-2` (3 accs) | 80.12 / 77.32 | 86.63 / 82.74 | 92.37 / 85.97 |
+| `+ mean, bands 0-1` | 80.04 / 76.58 | 86.24 / 81.63 | 92.97 / 85.03 |
+
+Bands 3–5 are the three *lowest-frequency* bands (taps 6–8, 243–1943 Hz).
+Averaging those three is worth as much as averaging all six, and on `siren`
+and `catmeow` it is better on test. Averaging the three highest instead is
+worth roughly half. The maximum is a good statistic for a transient and a poor
+one for a sustained low-frequency component, which is exactly where these
+detectors' evidence lives.
+
+**So the RTL parameter is `AVG_N`**, not a flag: how many bands, counted from
+the deepest tap, keep a mean beside their maximum. `NSTAT` is gone.
+
+At `AVG_N=0` the design is proved equivalent to the RTL as it stood **before
+any of this work** (commit `1950f5c`) by a bounded sequential SAT miter —
+`sat -seq 60 -set-init-zero -verify -prove-asserts`, all inputs, from reset.
+Synthesised area moves by 47 µm² and the flop count does not move at all, so
+the shipped `sheila` and `drone` builds are untouched in behaviour.
+
+That check is worth doing against the *original* rather than the previous
+revision: an earlier equivalence run in this session compared two intermediate
+versions and would have said nothing about the `NSTAT`→`AVG_N` rework that
+came after it.
+
+---
+
+## Round 20 — what the whole box costs, correctly this time
+
+An earlier gate said 6 bands with any mean fails. It did — at `NPHASE=2` and
+`HACC_W=6`. With the `NPHASE=1` / `HACC_W=5` pair that round 14 had already
+shown to be nearly free, the picture is completely different:
+
+| `NBAND` | `AVG_N` | `NFRAME` | `NHID` | K | synth µm² | verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| 6 | 1 | 2 | 4 | 6 | 18 713 | FIT |
+| 6 | 2 | 2 | 4 | 6 | 20 165 | FIT |
+| 6 | 2 | 4 | 4 | 6 | 20 793 | FIT |
+| 6 | **3** | **2** | 4 | 6 | **20 927** | **FIT** |
+| 6 | 3 | 4 | 4 | 6 | 21 604 | TIGHT |
+| 6 | 4 | 2 | 4 | 5 | 21 990 | TIGHT |
+| 6 | 2 | 2 | **8** | 6 | 22 020 | TIGHT |
+| 6 | 4 | 2 | 4 | 6 | 22 309 | FAIL |
+| 7 | 3 | 2 | 4 | 6 | 22 440 | FAIL |
+| 5 | 3 | 4 | 4 | 6 | 20 588 | FIT |
+
+**Six bands and the mean fit together after all.** The whole "the mean costs
+two bands" conclusion was an artefact of holding `NPHASE=2` and `HACC_W=6`
+fixed while varying the thing under test — the same mistake as round 2, made
+again three rounds after diagnosing it.
+
+`NHID=8` and `AVG_N=3` do not fit together (23 084); `NHID=8` with `AVG_N=2`
+does, barely.
+
+**The candidate designs going into the final comparison**, all
+`STATE_W=9 TAP0=3 NBAND=6`:
+
+| | geometry | µm² |
+|---|---|---:|
+| **A** | max only, `NHID=4`, `NPHASE=2`, `NFRAME=8` (round 9's winner) | 20 993 |
+| **B** | max only, `NHID=8`, `NPHASE=1`, `NFRAME=4` | 21 064 |
+| **C** | `AVG_N=3`, `NHID=4`, `NPHASE=1`, `NFRAME=2` | 20 927 |
+| **D** | `AVG_N=3`, `NHID=4`, `NPHASE=1`, `NFRAME=4` | 21 604 |
+| **E** | `AVG_N=2`, `NHID=8`, `NPHASE=1`, `NFRAME=2` | 22 020 |
+
+---
+
+## Round 21 — is the RTL computing what the search measured?
+
+**Why this round exists.** Every accuracy number about the frame mean comes
+from the software model in `train/optim/fe_stats.py`. If the RTL computes
+something else, all of it describes a design that does not exist. That is the
+kind of gap that has bitten this project before: `docs/nn_optimization.md`
+records a testbench that pinned `NBAND=5` while the RTL elaborated 6, and it
+failed two bit-exactness tests against a design that was in fact correct.
+
+**The obstacle.** `test/test.py` answers exactly this question, but it needs
+cocotb, which is not installed and cannot be installed here — no `pip` in the
+venv, no host `iverilog`, and the librelane image has no network. The image
+does carry `iverilog` and `vvp`.
+
+**So the check is a plain Verilog testbench.** `test/tb_favg.v` reads a PDM bit
+stream, runs the design, and prints the `NBAND` frame maxima and `AVG_N` frame
+means at every entry to `S_CLASS`; `train/optim/check_favg.py` generates the
+stimulus, computes the same values with `fe_stats.frontend_stats`, and diffs
+them. `AVG_SHIFT=4` at `FRAME_LOG2=12` rather than 6 at 16, because the
+averaging constraint `TAP0+NBAND-1 ≤ FRAME_LOG2-AVG_SHIFT` has to hold — same
+arithmetic, 16× less simulation.
+
+**Result: 4 frames compared, 0 mismatched.** Both rings, every band, every
+frame.
+
+Two bugs turned up getting there and both were in the checker, which is worth
+recording because either would have produced a *passing-looking* comparison of
+nothing:
+
+* the stimulus was a 1 s enveloped clip, of which the simulated window reaches
+  only the first ~10 ms — so both sides agreed on near-silence;
+* the chip's one-tick input latency was not modelled (it latches `ui_in`
+  mid-period and consumes it on the next), which `test/test.py` handles by
+  prepending a reset tick. `fe_stats.frontend_stats` gained a `bits=` entry
+  point so both sides consume the identical stream.
+
+**What is still unverified.** The *classifier* path at `AVG_N>0` — the adder
+tree reading `NBAND+AVG_N` features — is not simulated, only synthesised.
+`test/test.py:test_detector_matches_model` covers that and cannot run here; it
+was also already failing on the `NFRAME=8` sheila build before this work
+started (`nn_optimization.md` §7). No detector should tape out until it passes.
+
+---
+
+## Round 22 — score the fitting designs through the chip, and the mean collapses
+
+**Hypothesis.** Five designs survived the area gate and three of them differ in
+`NHID`, `HACC_W` and the window schedule — parameters the fp32 probe does not
+have and cannot rank. Score them through `train/optim/qat.py`, which *is* the
+chip: ternary weights, saturating accumulator, the hardware's window hop.
+
+All candidates are `STATE_W=9 TAP0=3 NBAND=6` on the same `_fin` extraction
+(whose max plane was checked byte-identical to `extract_clips.py` at
+`STATE_W=9`), 4 seeds, ranked by mean validation AUC:
+
+| | geometry | µm² | `babycry` val/test | `siren` val/test |
+|---|---|---:|---|---|
+| **A** | max, nf8, p2, H4, acc6 | 20 993 | **80.12 / 77.59** | **87.57 / 80.90** |
+| **B** | max, nf4, p1, H8, acc6 | 21 064 | 78.46 / 77.55 | 86.55 / 81.09 |
+| **C** | mean×3, nf2, p1, H4, acc6 | 21 801 | 75.75 / 71.90 | 83.17 / 78.27 |
+| **D** | mean×3, nf4, p1, H4, acc5 | 21 604 | 77.37 / 75.87 | 85.52 / 80.30 |
+| **E** | mean×2, nf2, p1, H8, acc5 | 22 020 | 76.16 / 73.24 | 83.72 / 77.99 |
+| **F** | max, nf4, p1, H4, acc5 | 18 063 | — | 85.27 / 79.87 |
+
+**Design F is the control that matters, and it was missing from my first
+attempt at this round.** C, D and E all *add* the mean while *removing*
+something to pay for it — a window phase, half the hidden units, a bit of
+accumulator. Every comparison available without F conflates "does the mean
+help?" with "does what it cost hurt more?". F is D with the mean deleted and
+nothing else changed.
+
+**The full matrix**, all eight tasks, validation / test, 4 seeds. Selection is
+on validation; the test column is recorded and not used to choose.
+
+| task | A | B | C | D | E | F |
+|---|---|---|---|---|---|---|
+| `babycry` | **80.1** / 77.6 | 78.5 / 77.5 | 75.8 / 71.9 | 77.4 / 75.9 | 76.2 / 73.2 | 77.9 / 76.2 |
+| `catmeow` | **91.5** / 82.5 | 91.4 / 83.2 | 89.5 / 77.9 | 89.1 / 75.0 | 90.2 / 79.7 | — |
+| `clap` | 84.4 / 67.4 | 84.3 / 69.2 | 82.1 / 64.8 | 81.0 / 63.3 | **85.4** / 68.3 | — |
+| `dogbark` | **79.5** / 80.4 | 77.2 / 77.9 | 72.9 / 72.3 | 75.3 / 75.7 | 72.5 / 72.1 | — |
+| `mosquito` | **86.5** / 58.3 | 85.8 / 58.2 | — | — | — | — |
+| `siren` | **87.6** / 80.9 | 86.5 / 81.1 | 83.2 / 78.3 | 85.5 / 80.3 | 83.7 / 78.0 | 85.3 / 79.9 |
+| `vad` | **81.9** / 66.9 | 79.5 / 65.7 | 77.4 / 64.1 | 79.9 / 64.5 | 77.4 / 64.1 | — |
+| `water` | **76.7** / 65.7 | 76.5 / 65.1 | 73.0 / 62.6 | 74.3 / 64.8 | 75.2 / 63.1 | — |
+
+**Design A wins seven of eight**, and every mean-carrying design (C, D, E)
+loses on every task but `clap` — where E leads by 0.96 against a ±0.89 seed
+spread, i.e. inside noise, while costing 1 027 µm² more and landing TIGHT
+rather than FIT.
+
+**D − F, the frame mean's actual value on the chip:**
+
+| task | D (with mean) | F (without) | difference |
+|---|---|---|---:|
+| `siren` | 85.52 / 80.30 | 85.27 / 79.87 | **+0.25 / +0.43** |
+| `babycry` | 77.37 / 75.87 | 77.88 / 76.17 | **−0.51 / −0.30** |
+
+Positive on one task, negative on the other, both inside the seed spread. The
+per-frame mean — which round 5 measured at +2.4 to +9.0, and which I called the
+largest effect in this search — is **worth nothing to the classifier that
+actually ships**.
+
+---
+
+## Round 24 — why the probe was wrong: capacity, not just quantisation
+
+**Hypothesis.** The fp32 probe's ladder starts at MLP-32. The chip has four
+hidden units. If the mean's value depends on having capacity to spend on it,
+the ladder was answering a question about a model 8× wider than the hardware.
+`probe.py` gains an `mlp4` rung matching `NHID=4`.
+
+**Result** — `siren_fin`, `NFRAME=4`, `NPHASE=1`, the geometry D and F share:
+
+| classifier | max | + mean×3 | gain |
+|---|---:|---:|---:|
+| fp32 MLP-64 | 85.97 | 87.07 | **+1.10** |
+| fp32 MLP-8 | 85.62 | 86.89 | +1.27 |
+| fp32 MLP-4 — the chip's width | 84.44 | 85.09 | **+0.65** |
+| ternary H=4, 5-bit accumulator — the chip | 85.27 | 85.52 | **+0.25** |
+
+**The gain shrinks monotonically as the classifier shrinks toward the
+hardware's.** Roughly half the shortfall is capacity — four units cannot
+exploit three extra features per frame the way sixty-four can — and the rest is
+quantisation.
+
+And note that even MLP-64 sees only +1.10 here, against the +3 to +7 round 5
+measured. That comparison was at `STATE_W=10`; this one is at 9. **`STATE_W=9`
+and the frame mean appear to be substitutes**, both recovering information the
+10-bit max-only front end was throwing away, so their gains do not add.
+
+**The methodological lesson, which is the transferable part of this whole
+document:** an unquantised probe is a sound instrument for *what has the front
+end discarded* and an unreliable one for *what will a four-unit ternary
+template do with it*. The `mlp4` rung should have been in the ladder from round
+1. Reading it at the rung that matches the hardware would have caught this
+fifteen rounds earlier, and rounds 5, 10, 11, 16, 17, 19 and 20 — the entire
+frame-mean line of work — would have been scoped differently.
+
+`babycry` is blunter than `siren` about it. At `STATE_W=9`, `NFRAME=4`, the
+mean is **neutral to negative at every capacity**: MLP-64 79.67 → 78.83,
+MLP-8 78.44 → 76.90, MLP-4 77.71 → 77.75. Which points at the real mechanism.
+
+---
+
+## Round 25 — `STATE_W=9` and the frame mean are the same information
+
+**Hypothesis.** Round 5 measured the mean at +3 to +7 on `STATE_W=10` features.
+Round 24 measures it at +1.10 on `STATE_W=9` features with an identical
+classifier. If both changes recover the same discarded information, their gains
+should not add.
+
+**Experiment.** The same comparison at both state widths, same window, same
+classifier. `siren`, `NFRAME=8`, `NPHASE=2`, 3 seeds, validation AUC:
+
+| | max only | + mean (all 6 bands) | mean's gain |
+|---|---:|---:|---:|
+| **MLP-64**, `STATE_W=10` | 86.65 | **90.84** | **+4.19** |
+| **MLP-64**, `STATE_W=9` | 88.62 | 89.11 | **+0.49** |
+| **MLP-4**, `STATE_W=10` | 82.28 | 88.98 | +6.70 |
+| **MLP-4**, `STATE_W=9` | 86.22 | 86.69 | +0.47 |
+
+**Confirmed, and almost completely.** Narrowing the cascade state is worth
++1.97 (MLP-64) or +3.94 (MLP-4) on its own; adding the mean on top of it
+recovers 0.5 more. Read the other way: given the mean, narrowing the state
+*costs* 1.73. The two changes are recovering the same thing.
+
+Why a *narrower* accumulator should preserve more is not something this search
+establishes, and I will not invent a mechanism for it. What is measured is that
+`STATE_W=9` shifts the cascade's operating point relative to the `>> K_SHIFT`
+arithmetic and the `bit_length` feature, and that whatever the 10-bit state was
+losing, both changes recover.
+
+**The design consequence.** The best combination at both capacities is
+`STATE_W=10` **plus** the mean (90.84 / 88.98) — and it does not fit: six bands
+with a mean is 23 699 µm² at best against a 22 150 budget, before the extra
+state bit. The best *fitting* combination is `STATE_W=9` with max alone, which
+is design A. So the frame mean is not merely marginal on the chip; it is
+redundant with a change that is simultaneously **more accurate and 883 µm²
+cheaper**.
+
+That is the honest end of the `AVG_N` line of work: a front-end capability that
+is designed, built, verified bit-exact, proved equivalent when disabled — and
+measured not to be worth enabling.
+
+---
+
+## Round 6 — is sheila's training recipe wrong for these corpora?
+
+**Hypothesis.** `new_tasks.md` §6 says plainly that "no hyper-parameter search
+was run for any task": all eight use the recipe tuned on Speech Commands.
+These corpora differ from it in every way an optimiser cares about — 4 625 to
+43 499 clips, 8 % to 78 % positive, 92 to 3 330 validation positives — so
+per-task tuning of the *free* knobs should be worth a point at zero area.
+
+**Experiment.** Coordinate sweep over 28 configurations (pooling, warmup,
+epochs, four kinds of augmentation, label smoothing, positive weighting,
+requantiser leak, three learning rates, weight decay, EMA, schedule, `HSHIFT`),
+4 seeds each, ranked by mean validation AUC.
+
+**Refuted.** The best configuration beats the shipped recipe by **0.5 points on
+`catmeow` (92.39 vs 91.87) and 0.2 on `clap` (84.61 vs 84.42)**, both inside
+the seed spread. The winners — `aug_time=1`, `epochs=2000`, `pos_weight=2.0` —
+are all marginal, and no knob moved any task by more than its own ±0.3–0.8
+standard deviation.
+
+This is a useful negative. It says the recipe was never the problem, and it
+means every later round can keep using it unchanged rather than re-tuning per
+front end.
+
+---
+
+## Round 7 — the affordable design space, enumerated
+
+**Hypothesis.** Round 3 gated one axis at a time against `NFRAME=8` and
+concluded `MANT=2` needs `STATE_W=9` and `NBAND=7` is unreachable. Round 3's
+own control undermines both: `NFRAME=4` scores as well as 8 on two tasks and is
+worth 577 µm². The box should be enumerated, not walked.
+
+**Experiment.** 72 points: `NFRAME` ∈ {2,4,8} × `NBAND` ∈ {6,7} × `MANT` ∈
+{1,2} × `STATE_W` ∈ {9,10} × `FRAME_LOG2` ∈ {15,16,17}, later extended with
+`NFRAME`=16. Every point is a synthetic header at the shipped 74 % weight
+density, which runs 250–700 µm² heavier than the real headers the eight tasks
+emit — so a TIGHT here is comfortable in practice and a FAIL is real.
+
+**Result. 35 of 72 fit**, and the reachable menu is much narrower than the
+axis-at-a-time view suggested:
+
+* **`NBAND=7` and `MANT=2` never fit together**, at any window length.
+* **`NBAND=7` needs both `NFRAME` ≤ 4 and `STATE_W=9`** (21 614–21 799 TIGHT).
+  At `STATE_W=10` it fails at every window length.
+* **`MANT=2` needs `NFRAME` ≤ 8 and `STATE_W=9`** — or `NFRAME` ≤ 4 on its own.
+* `FRAME_LOG2` is free across the whole box (±60 µm²), so time resolution
+  costs nothing and can be chosen per task on accuracy alone.
+* The cheapest fitting point is `NFRAME=2, STATE_W=9` at 19 585 µm² — 88.4 % of
+  core, 2 565 µm² under budget. Halving the window twice pays for a great deal.
+
+---
+
+## Round 8 — should the chip track its own input level?
+
+**Hypothesis.** The chip subtracts one *constant*, `FEAT_OFF`, from every band
+of every frame, so a detector trained at one input level degrades at another.
+`docs/robustness.md` measures exactly that: a 3 dB level drop takes sheila's
+recall from 19.8 % to 3.1 %. Replacing the constant with a level the design
+tracks for itself — `m += (x − m) >> shift` per band, one accumulator and one
+shift, updated once per frame — should help, and should help most on the
+corpora with the widest recording-level spread.
+
+**Experiment.** Three time constants (shift 1, 2, 3) plus `clip`, a
+non-causal per-clip mean subtraction that is not implementable and is there
+only as the upper bound on what the causal version could reach. All eight tasks.
+
+**Refuted on all eight, including by the upper bound.** Validation / test AUC:
+
+| task | none | ema shift 1 | shift 2 | shift 3 | clip (upper bound) |
+|---|---|---|---|---|---|
+| `babycry` | **77.81 / 74.87** | 73.75 / 71.33 | 74.77 / 72.01 | 74.57 / 73.04 | 74.05 / 71.95 |
+| `catmeow` | **92.38 / 83.98** | 87.08 / 73.09 | 89.28 / 75.35 | 89.44 / 75.58 | 89.76 / 76.22 |
+| `clap` | **85.93 / 72.57** | 82.40 / 67.36 | 82.76 / 66.17 | 83.16 / 69.20 | 83.89 / 68.89 |
+| `dogbark` | 79.10 / **81.37** | 79.25 / 79.52 | 79.29 / 80.66 | 79.40 / 81.26 | 79.65 / 79.84 |
+| `mosquito` | **91.62 / 64.71** | 89.33 / 63.49 | 89.72 / 63.74 | 90.01 / 65.15 | 91.02 / 65.55 |
+| `siren` | **86.57 / 81.98** | 82.02 / 75.40 | 82.66 / 75.68 | 82.28 / 76.75 | 83.29 / 76.62 |
+| `vad` | **82.32 / 63.47** | 80.14 / 62.58 | 80.89 / 63.36 | 81.30 / 64.51 | 81.34 / 63.16 |
+| `water` | **79.92 / 73.52** | 77.84 / 68.44 | 79.46 / 69.27 | 79.46 / 70.23 | 79.92 / 72.70 |
+
+**Absolute level is a feature, not a nuisance, on all eight corpora.** Removing
+it costs 3–9 validation points, and the non-causal bound costs almost as much,
+so this is not a matter of choosing a better time constant. It makes sense once
+stated: in every one of these datasets a positive clip is one where the event
+is *near the microphone*, and loudness is a real part of the answer. That is a
+property of the corpora rather than of the question, and it is worth writing
+down — a detector built this way will be level-sensitive in the field, as
+`robustness.md` already found for sheila.
+
+Note the contrast with round 5, which is not a contradiction: round 5 *adds* a
+smoothed level as an extra feature and keeps the max; round 8 *replaces* the
+level by subtracting it. The model wants both the peak and the average, and
+wants to keep the absolute value of both.
+
+---
+
+## Round 9 — score every front end that fits, on every task
+
+**Hypothesis.** Rounds 3 and 4 used four pilot tasks. Round 7 says the
+reachable menu is three front ends, all at `STATE_W=9`: `st9` (6 bands, 3 dB),
+`m2st9` (6 bands, 1.5 dB), `nb7st9` (7 bands, 3 dB, needs `NFRAME` ≤ 4). Score
+all three on all eight tasks at `NFRAME` 2, 4 and 8, so the per-task choice is
+made on evidence rather than on the pilots.
+
+**Result.** Best by validation, with the test AUC alongside. **✓** marks the
+row as fitting at that window length — `nb7st9` fails at `NFRAME=8`
+(22 279–22 397) and `m2st9` fails at `NFRAME=16`, so the best-scoring row is
+not always the one that can be built.
+
+| task | chip today | round-1 headroom | best fitting front end | val | test |
+|---|---:|---:|---|---:|---:|
+| `babycry` | 72.36 | 76.60 | `st9` nf8 ✓ | 82.45 | **80.94** |
+| `catmeow` | 79.74 | 83.81 | `st9` nf8 ✓ | 93.03 | **84.87** |
+| `clap` | 72.32 | 74.39 | `nb7st9` nf2 ✓ | 87.35 | **75.92** |
+| `dogbark` | 75.74 | 81.00 | `m2st9` nf8 ✓ | 83.37 | **84.03** |
+| `mosquito` | 62.96 | 65.70 | base nf8 ✓ | 91.67 | **65.70** |
+| `siren` | 76.24 | 81.64 | `m2st9` nf8 ✓ | 89.49 | **83.29** |
+| `vad` | 63.72 | 63.81 | `nb7st9` nf4 ✓ | 84.39 | **68.76** |
+| `water` | 68.92 | 73.48 | `m2st9` nf4 ✓ | 84.20 | **75.81** |
+
+**Every task moves, and `vad` moves most.** Round 1 called `vad` finished —
+chip 63.72 against a headroom of 63.81, the features being the whole limit.
+That was true of the front end round 1 measured and I generalised it past its
+evidence: with `STATE_W=9` and a seventh band, `vad`'s headroom is 69.24, and
+the fitting version is 68.76. The lesson is that "the features are the limit"
+is a statement about one set of features, and the honest way to write it is
+with the geometry attached.
+
+**`mosquito` is the exception and its validation column is a trap.** Every
+front end raises its validation AUC — `m2st9` reaches 92.04 against the
+baseline's 91.67 — and every one of them *lowers* test, `st9` to 59.38 and
+`nb7st9` to 57.53. The HumBugDB split is Tanzanian field sites with unseen
+recording rigs, and a front end tuned to score better in-domain transfers
+worse. Selection is on validation, so a naive pipeline would pick `m2st9`
+here and lose 4.6 points. `mosquito` keeps the shipped front end.
+
+**Hypothesis.** Round 5's `mean` is not buildable: it is an exact per-frame
+average and each band ticks a different number of times per frame
+(2^(`FRAME_LOG2`−b)), so it needs a per-band divisor. The buildable form is a
+leaky integrator carried across frame boundaries — `favg += (feat − favg) >>
+AVG_SHIFT`, one accumulator and one shift per band, the same arithmetic the
+cascade already does `NSTAGE` times per tick.
+
+**The RTL.** `src/tt_um_wakeword.sv` gains `NSTAT` (1 or 2) and `AVG_SHIFT`.
+`NSTAT=2` adds a second rotating ring `favg`, rotated in lockstep with `fmax`
+so the band under update is always at the head, held shifted left by
+`AVG_SHIFT` so the shift is exact and no rounding state is lost. It is
+deliberately **not** cleared at the frame boundary: it is an integrator with a
+time constant of its own, and clearing it every frame would turn it back into a
+per-frame statistic whose value depends on where the boundary fell. The
+template then reads `NBAND*NSTAT` features per row, band-major — `[band0 max,
+band0 avg, band1 max, …]`, the same order `fe_stats.py` writes.
+
+**Regression first.** At the default `NSTAT=1` the design synthesises to
+**1301 cells, 207 flops, 21 857 µm²** — identical in all three numbers to
+`r3_ref` measured before the change. Both builds still elaborate under
+iverilog, with the same (pre-existing) `constant selects in always_*` warning
+the unmodified file produces. The change is a true no-op for everything that
+ships today.
+
+**Result — the average costs two bands.** `NSTAT=2`, `AVG_SHIFT=3`,
+`STATE_W=9`:
+
+| `NBAND` | `NFRAME`=2 | `NFRAME`=4 | `NFRAME`=8 |
+|---|---:|---:|---:|
+| 4 | 21 427 TIGHT | **21 975 TIGHT** | 22 563 FAIL |
+| 5 | 23 949 FAIL | 24 212 FAIL | 25 215 FAIL |
+| 6 | 26 146 FAIL | 26 921 FAIL | 27 483 FAIL |
+
+A shorter time constant does not rescue the fifth band — `AVG_SHIFT=1` narrows
+the accumulator by two bits and still lands at 23 209. Each extra band with
+`NSTAT=2` costs a `STATE_W` word, a `FEAT_W` max register, an `AVG_W`
+accumulator, a cascade stage **and** two adder-tree columns, so the marginal
+band is roughly 2 500 µm² rather than the ~400 it costs at `NSTAT=1`.
+
+**But two further savings buy the fifth band back.** `NPHASE` 2→1 halves the
+hidden accumulator ring (`NSLOT = NPHASE*NHID`) and `HACC_W` 6→5 narrows every
+one of them:
+
+| configuration | synth µm² | verdict |
+|---|---:|---|
+| `NBAND=5 NFRAME=2 NPHASE=1 HACC_W=5` | **20 979** | FIT |
+| `NBAND=5 NFRAME=4 NPHASE=1 HACC_W=5` | **21 340** | TIGHT |
+| `NBAND=5 NFRAME=2 NPHASE=1 HACC_W=6` | 22 263 | FAIL |
+| `NBAND=6 NFRAME=2 NPHASE=1 HACC_W=5` | 23 439 | FAIL |
+
+So **five bands is the ceiling with the average, and six is unreachable by any
+combination tried.** Neither saving is free in accuracy: `NPHASE=1` stops the
+scored windows overlapping, which coarsens the multiple-instance bag, and the
+bag has to be the one the hardware scores — `nn_optimization.md` measured a
+mismatched training grid costing 9 points. `HACC_W=5` is invisible to the fp32
+probe entirely and needs the quantised trainer to evaluate.
+
+**This leaves three candidate shapes**, which rounds 12 and 13 score against
+each other and against the six-band max the eight detectors ship with today:
+
+* 6 bands, max only — today, `NSTAT=1`
+* 4 bands, max + average, `NPHASE=2`, `HACC_W=6`
+* 5 bands, max + average, `NPHASE=1`, `HACC_W=5`
+
+---
+
+## Result
+
+Each detector trained over 8 seeds and selected on validation, the emitted
+header re-scored through the independent integer chip model in
+`train/eval_header.py`, and that **real header** synthesised at its own
+geometry with the `FEAT_OFF` the trainer actually used. Test AUC at the
+validation-selected seed, the same statistic `docs/new_tasks.md` reports.
+
+| task | round 0 | now | Δ | design | synth µm² | vs shipped 21 242 | export |
+|---|---:|---:|---:|---|---:|---:|---|
+| `babycry` | 72.36 | **78.54** | **+6.18** | A | 20 781 FIT | −461 | exact |
+| `siren` | 76.24 | **80.96** | **+4.72** | A | 20 777 FIT | −465 | exact |
+| `dogbark` | 75.74 | **79.68** | **+3.94** | A | 20 496 FIT | −746 | exact |
+| `vad` | 63.72 | **66.99** | **+3.27** | A | 20 514 FIT | −728 | exact |
+| `catmeow` | 79.74 | 79.74 | — | keep round 0 | | | |
+| `clap` | 72.32 | 72.32 | — | keep round 0 | | | |
+| `water` | 68.92 | 68.92 | — | keep round 0 | | | |
+| `mosquito` | 62.96 | 62.96 | — | keep round 0 | | | |
+
+**Four of eight improve, by 3.3 to 6.2 AUC, and every one of them is smaller
+than the design it replaces.** All four are design A: six bands, per-frame
+maximum, `NFRAME=8`, `NPHASE=2`, `NHID=4`, `HACC_W=6` — the shipped
+architecture with **one parameter changed, `STATE_W` 10 → 9**.
+
+**Four do not improve, and are left alone.** Three separate rules had to hold
+for that to come out right:
+
+* `catmeow` (−0.32 val) and `mosquito` (−3.68 val) are *worse* under every
+  candidate, because all 42 candidates were built on `STATE_W=9` features and
+  those two tasks dislike them. Round 23 compares each winner against the
+  incumbent and keeps the incumbent when it wins — without that guard it would
+  have shipped `mosquito` a detector 3.7 points worse than the one it has.
+* `clap` (+0.69 val, ±1.10) and `water` (+0.30 val, ±1.64) gain **less than
+  their own seed spread** while losing 2.9–3.3 points of test. A gain inside
+  the noise is not a gain; both keep round 0.
+
+## What the 90 % target came to
+
+**Not reached, and it was not reachable.** The evidence was available in round
+1 and I should have said so then rather than at round 25: an unconstrained fp32
+model on the shipped features tops out at 63.8–83.8 %, the best front end found
+lifts that to ~87 % on the two strongest tasks, and the ternary chip runs 3–6
+points below its own fp32 reference. The best result here, `siren` at 80.96 %,
+is nine points short.
+
+Two tasks are limited by data rather than design and no amount of silicon will
+move them: `mosquito`'s test split is HumBugDB's deliberate unseen-site domain
+shift, where the fp32 probe drops from 91.4 to 64.1 exactly as the chip does;
+`vad` asks a six-octave 3 dB front end to separate speech from music and
+broadband noise by syllabic envelope alone.
+
+## What actually mattered
+
+**One parameter.** `STATE_W` 10 → 9 is more accurate *and* 883 µm² cheaper. It
+is the entire result. Twenty-five rounds, a new RTL front-end capability, a
+72-point area frontier and ~180 trained configurations found nothing else that
+both helps and fits.
+
+**The frame mean is the cautionary tale.** It measured +2.4 to +9.0 AUC, I
+called it the largest effect in the search, and I built it: three
+implementations, an RTL parameter, a bit-exactness harness, an equivalence
+proof. Against a proper control it is worth **+0.25 on one task and −0.51 on
+another**, because (a) a four-unit ternary template cannot use extra features
+the way an MLP-64 can, and (b) it recovers the same information `STATE_W=9`
+does, for more area. It ships as `AVG_N=0`, costing nothing, fully documented.
+
+**Three conclusions in this document were wrong, all from one mistake:**
+varying an axis while holding fixed the resource it shares.
+
+| round | claim | why it was wrong |
+|---|---|---|
+| 2 | `NHID=8` cannot fit | held `NPHASE=2`; the cost is `NSLOT = NPHASE × NHID`. Fits at 21 064. |
+| 1 | `vad` is finished | true of one front end; `vad` has since gained 3.3 |
+| 16 | the mean costs two bands | held `NPHASE=2`/`HACC_W=6`; six bands keep it at 20 927 |
+
+**And the instrument was wrong.** The fp32 headroom probe steered rounds 3–21.
+It answers "what did the front end discard" well and "what can a four-unit
+ternary template use" badly, and the gap between those two questions is the
+difference between +7 and 0. The `mlp4` rung that exposed this took ten minutes
+to add and should have been in the ladder from round 1.
+
+---
+
+## Round 14 — the accumulator ring, not the hidden units
+
+**Hypothesis.** Round 11 bought the fifth band by dropping `NPHASE` to 1, which
+halves `NSLOT = NPHASE × NHID`. That is the same quantity round 2 blamed on
+`NHID`. If `NSLOT` is what costs, then `NHID=8` at `NPHASE=1` has exactly the
+eight accumulators the shipped `NHID=4, NPHASE=2` design already has, and the
+classifier width round 2 declared dead should fit.
+
+**Confirmed.** `TAP0=3 NBAND=6 NSTAT=1`:
+
+| configuration | cells | flops | synth µm² | core | verdict |
+|---|---:|---:|---:|---:|---|
+| `NHID=8 NPHASE=1 NFRAME=2 STATE_W=9` | 1161 | 196 | **20 053** | 90.5 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=9` | 1272 | 198 | **21 064** | 95.1 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=9 HACC_W=5` | 1214 | 190 | **20 218** | 91.3 % | FIT |
+| `NHID=8 NPHASE=1 NFRAME=8 STATE_W=9` | 1312 | 200 | 21 443 | 96.8 % | TIGHT |
+| `NHID=8 NPHASE=1 NFRAME=4 STATE_W=10` | 1325 | 207 | 22 054 | 99.6 % | TIGHT |
+| `NHID=8 NPHASE=2 NFRAME=8 STATE_W=10` (round 2) | 1509 | 257 | 26 151 | 118.1 % | FAIL |
+
+**`NHID=8` is 4 708 µm² cheaper at `NPHASE=1` than at `NPHASE=2`** — it is
+the ring that costs, and round 2's conclusion was an artefact of never varying
+`NPHASE` with it. Doubling the hidden width is affordable, and it matters:
+round 1 measured a bare linear read-out 7–12 points below an fp32 MLP-32 on
+the same features, with the ternary `H=4` template sitting between them.
+
+**And both large levers fit together.** `NHID=8`, `NSTAT=2`, 4 bands,
+`NPHASE=1`, `HACC_W=5`, `STATE_W=9`, `NFRAME=4`: **21 634 µm², TIGHT** — twice
+the hidden width *and* the per-band average, inside the same tile.
+
+What `NPHASE=1` and `HACC_W=5` cost in accuracy is not something the fp32
+probe can see: `NPHASE` sets the multiple-instance bag the chip scores, and
+`HACC_W` is the saturating accumulator the probe does not have. Both need the
+quantised trainer, which is what the capacity cross-sweep (`H` × `NPHASE` ×
+`HACC_W`, 4 seeds, all eight tasks) measures.

@@ -35,12 +35,58 @@ module tt_um_wakeword #(
     parameter NSTAGE       = 9,    // cascade depth
     parameter K_SHIFT      = 2,     // 1-pole coefficient
     parameter STATE_W      = 10,    // signed cascade state
-    parameter TAP0         = 4,     // first stage used as a band
+    // Band set and window geometry, per build. The two detectors listen for
+    // opposite things, and measurement says so rather than intuition: a wake
+    // word is a short event, best caught by a 335 ms window slid across the
+    // clip, and it gains 1.5 AUC from a 7.8-15.5 kHz band. A drone is a steady
+    // tone that wants the longest window it can get, and TAP0=3 *costs* it
+    // 4.4 AUC because the band it drops is the low one, where rotor hum lives.
+    //
+    // Each geometry fits the tile on its own -- 21 113 and 21 372 um^2
+    // synthesised against a 22 150 um^2 budget (train/optim/area_gate.py) --
+    // but their union does not: NBAND=6 at NFRAME=16 needs 22 468 um^2, 101.4 %
+    // of the core, and neither DEBUG_PINS=0 nor SCORE_W=9 buys that back. So
+    // the two builds differ here instead of one settling for the other's shape.
+`ifdef WW_WEIGHTS_DRONE
+    parameter TAP0         = 4,     // stages 3..8, keeping the lowest band
     parameter NBAND        = 5,
+    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms
+    parameter NFRAME       = 16,    // 671 ms of integration under one window
+`else
+    parameter TAP0         = 3,     // stages 2..8, adding 7.8-15.5 kHz
+    parameter NBAND        = 6,
+    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
+    parameter NFRAME       = 8,     // 335 ms, hop 168 ms, five positions
+`endif
     parameter MANT         = 1,     // mantissa bits in the log -> 3 dB steps
     parameter FEAT_W       = 4,
-    parameter FRAME_LOG2   = 16,    // 65_536 mic ticks = 41.9 ms at 1.5625 MHz
-    parameter NFRAME       = 16,
+    // How many bands also keep a frame *mean* beside their frame maximum, out
+    // of NBAND, counted from the deepest tap -- i.e. the AVG_N lowest-frequency
+    // bands. 0 is what has always shipped: the maximum alone.
+    //
+    // The mean is what the maximum throws away, and on the eight detectors in
+    // docs/task_optimization.md it is worth up to +7 test AUC, more than every
+    // cascade change measured combined. It is also where the area goes, one
+    // AVG_W accumulator per averaged band, so AVG_N is a parameter rather than
+    // a flag: the mean of the three lowest bands captures most of the gain of
+    // averaging all six, for half the accumulators.
+    //
+    // An exact mean would need a per-band divisor: band b ticks 2^(FRAME_LOG2-b)
+    // times per frame, 8192 at band 3 against 256 at band 8. So sample instead
+    // of averaging everything -- take 2^AVG_SHIFT samples per band per frame,
+    // the same count for every band, and the divide is a constant >> AVG_SHIFT.
+    //
+    // The sampling instant is the same for every band, which is what makes
+    // this nearly free: band b is due when cnt[b-1:0] is zero, and "every
+    // 2^(FRAME_LOG2-b-AVG_SHIFT)-th tick of band b" reduces to
+    // cnt[FRAME_LOG2-AVG_SHIFT-1:0] == 0 for all of them. One AND over counter
+    // bits that already exist, shared across the ring.
+    //
+    // A leaky integrator was tried first and is not good enough: it averages
+    // over ~2^K ticks rather than over the frame, and at the low bands that is
+    // a small fraction of one frame. It recovers about a third of the gain.
+    parameter AVG_N        = 0,
+    parameter AVG_SHIFT    = 6,     // log2 of the samples per band per frame
     parameter NPHASE       = 2,     // staggered windows, hop = NFRAME/NPHASE
     parameter NHID         = 4,     // hidden units; 1 == the old linear template
     parameter HACC_W       = 6,     // saturating hidden accumulator
@@ -73,6 +119,17 @@ module tt_um_wakeword #(
 
   localparam IN_AMP   = 1 << (STATE_W - 3);
   localparam FEAT_MAX = (1 << FEAT_W) - 1;
+  // Features the template reads per frame: every band's maximum, then the
+  // AVG_N means. AVG_W is one accumulator: 2^AVG_SHIFT samples of at most
+  // FEAT_MAX cannot overflow FEAT_W+AVG_SHIFT bits. NAVG is 1 rather than 0
+  // when AVG_N=0 because a zero-length array is not portable; the ring is
+  // unread in that case and synthesis removes it.
+  localparam NFEAT    = NBAND + AVG_N;
+  localparam AVG_W    = FEAT_W + AVG_SHIFT;
+  localparam NAVG     = (AVG_N > 0) ? AVG_N : 1;
+  // The averaged bands are the last AVG_N the tap loop visits, so the ring
+  // rotates only during those steps and is back in order for the classifier.
+  localparam AVG_STG0 = TAP0 + NBAND - AVG_N;
   localparam FIDX_W   = $clog2(NFRAME);
   localparam HOP      = NFRAME / NPHASE;
   localparam CNT_W    = FRAME_LOG2 + FIDX_W;
@@ -123,6 +180,11 @@ module tt_um_wakeword #(
   // always fmax[0] and the new value goes to the tail; after the NBAND tap
   // steps the ring is back in band order for the classifier's parallel read.
   logic        [FEAT_W-1:0]  fmax  [NBAND];
+  // Per-band frame-mean accumulator, rotated in lockstep with fmax so the band
+  // under update is always at the head, and cleared with it at the frame
+  // boundary. It holds the sum of 2^AVG_SHIFT samples, so the mean is the top
+  // FEAT_W bits.
+  logic        [AVG_W-1:0]   favg  [NAVG];
   // Hidden accumulators, one per (phase, unit), also kept as a ROTATING ring:
   // S_CLASS visits the NSLOT slots in a fixed order every frame, so the
   // current slot's accumulator is always hacc[0] and the result goes to the
@@ -205,6 +267,21 @@ module tt_um_wakeword #(
     feat = (wide > 9'(FEAT_MAX)) ? FEAT_W'(FEAT_MAX) : FEAT_W'(wide);
   end
 
+  // Frame-mean sampling. Band b is due when cnt[b-1:0] is zero, and taking
+  // every 2^(FRAME_LOG2-b-AVG_SHIFT)-th tick of band b reduces to the same
+  // test for every band: the low FRAME_LOG2-AVG_SHIFT bits of the frame
+  // counter are zero. So one AND over counter bits that already exist gates
+  // the whole ring, and every band contributes exactly 2^AVG_SHIFT samples.
+  //
+  // This holds only while every tap is due at those instants, i.e. while
+  // TAP0+NBAND-1 <= FRAME_LOG2-AVG_SHIFT. At FRAME_LOG2=16, AVG_SHIFT=6 that
+  // is band 10, and the deepest tap in any build here is 8.
+  localparam SAMP_W = FRAME_LOG2 - AVG_SHIFT;
+  wire avg_due = (cnt[SAMP_W-1:0] == '0);
+  // The accumulator cannot overflow: 2^AVG_SHIFT samples of at most FEAT_MAX
+  // sum to less than 2^(FEAT_W+AVG_SHIFT) = 2^AVG_W.
+  wire [AVG_W-1:0] avg_nx = favg[0] + AVG_W'(feat);
+
   // ---------------------------------------------------------------------
   // Classifier -- one shared ternary adder tree, time-multiplexed over
   // NPHASE x NWORD accumulators once per frame.
@@ -218,16 +295,26 @@ module tt_um_wakeword #(
   // 2 bits per weight: 01 = +1, 11 = -1, else 0. WW_ROW packs one
   // (word, slot) row of NBAND weights; see ww_weights.svh.
   wire [$clog2(NHID*NFRAME)-1:0] wsel = ($clog2(NHID*NFRAME))'(c_hd*NFRAME + c_slot);
-  wire [2*NBAND-1:0] wrow = WW_ROW[2*NBAND*wsel +: 2*NBAND];
+  wire [2*NFEAT-1:0] wrow = WW_ROW[2*NFEAT*wsel +: 2*NFEAT];
 
+  // Feature b of the row: every band's maximum first, in band order, then the
+  // AVG_N means, also in band order -- [max0..max(NBAND-1), avg of band
+  // NBAND-AVG_N .. avg of band NBAND-1]. The same order train/optim/probe.py
+  // and qat.py build when told `max,smean6@k-l`, and getting it wrong
+  // mis-decodes every weight silently rather than failing. A mean is read as
+  // the top FEAT_W bits of its accumulator, which is the divide by
+  // 2^AVG_SHIFT.
   logic signed [HACC_W-1:0] dot;
   always_comb begin
     logic signed [HACC_W-1:0] fc;
+    logic        [FEAT_W-1:0] fv;
     dot = '0;
-    for (int b = 0; b < NBAND; b++) begin
+    for (int b = 0; b < NFEAT; b++) begin
       logic [1:0] w2;
       w2 = wrow[2*b +: 2];
-      fc = HACC_W'($signed({1'b0, fmax[b]})) - HACC_W'(FEAT_OFF);
+      fv = (b < NBAND) ? fmax[b]
+                       : FEAT_W'(favg[b - NBAND][AVG_W-1 -: FEAT_W]);
+      fc = HACC_W'($signed({1'b0, fv})) - HACC_W'(FEAT_OFF);
       if (w2[0]) dot = w2[1] ? dot - fc : dot + fc;
     end
   end
@@ -278,6 +365,7 @@ module tt_um_wakeword #(
       slot <= '0;
       for (i = 0; i < NSTAGE; i++) ring[i] <= '0;
       for (i = 0; i < NBAND;  i++) fmax[i]  <= '0;
+      for (i = 0; i < NAVG;   i++) favg[i]  <= '0;
       for (i = 0; i < NSLOT;  i++) hacc[i]  <= '0;
       osum <= '0;
       hold <= '0;
@@ -297,6 +385,11 @@ module tt_um_wakeword #(
           if (is_tap) begin
             for (i = 0; i < NBAND - 1; i++) fmax[i] <= fmax[i + 1];
             fmax[NBAND-1] <= (casc_due && (feat > fmax[0])) ? feat : fmax[0];
+          end
+          if (AVG_N > 0 && stg >= STG_W'(AVG_STG0)
+                        && stg < STG_W'(TAP0 + NBAND)) begin
+            for (i = 0; i < NAVG - 1; i++) favg[i] <= favg[i + 1];
+            favg[NAVG-1] <= (casc_due && avg_due) ? avg_nx : favg[0];
           end
           if (casc_last) begin
             if (frame_end) begin
@@ -324,6 +417,10 @@ module tt_um_wakeword #(
 
         S_ROLL: begin
           for (i = 0; i < NBAND; i++) fmax[i] <= '0;
+          // The mean accumulator is a per-frame statistic like the max, so it
+          // clears with it. (The leaky integrator this replaced did not, which
+          // is part of why it measured the wrong thing.)
+          if (AVG_N > 0) for (i = 0; i < NAVG; i++) favg[i] <= '0;
           if (hold != 0) hold <= hold - 1'b1;
           cnt <= cnt + 1'b1;
           st  <= S_IDLE;

@@ -88,14 +88,16 @@ def window_scores(feats: np.ndarray, W1, HB, W2, hop: int, hacc_w=HACC_W,
     return np.stack(out, 1)
 
 
-def set_threshold(path, feats, labels, splits, W1, HB, W2, hop, fpr, hacc_w=HACC_W):
+def set_threshold(path, feats, labels, splits, W1, HB, W2, hop, fpr, hacc_w=HACC_W,
+                  feat_off=FEAT_OFF):
     """Pick the threshold on the validation split and patch it into the header.
 
     Weights are untouched; only the WW_THRESH_PK constant and its comment
     change, so a header can be re-pointed without retraining.
     """
     v = splits == 1
-    neg = np.sort(window_scores(feats[v], W1, HB, W2, hop, hacc_w).max(1)[labels[v] == 0])
+    neg = np.sort(window_scores(feats[v], W1, HB, W2, hop, hacc_w,
+                                feat_off=feat_off).max(1)[labels[v] == 0])
     thr = int(neg[int(np.ceil((1 - fpr) * len(neg))) - 1])
     with open(path) as f:
         txt = f.read()
@@ -121,11 +123,56 @@ def main():
                     help="rewrite WW_THRESH_PK so that this fraction of *validation* "
                          "non-drone clips fires (drone-detector operating point; the "
                          "wake-word FA/hour rule in train_sheila.py is far too strict here)")
+    ap.add_argument("--nframe", type=int, default=0,
+                    help="0 = the extraction's NFRAME. Set it when the header was "
+                         "emitted for a different window length than the features "
+                         "were cached with, or WW_ROW is sliced at the wrong stride.")
+    ap.add_argument("--nphase", type=int, default=0, help="0 = the extraction's NPHASE")
+    ap.add_argument("--stats", default="",
+                    help="for a train/optim/fe_stats.py extraction, the subset of "
+                         "its per-frame statistics the header was trained on, e.g. "
+                         "max,smean6. The cached cfg records the feature count of "
+                         "the WHOLE extraction, so a header trained on a subset is "
+                         "sliced at the wrong stride without this -- silently, "
+                         "since parse_header infers H from the WW_ROW width and "
+                         "would simply infer a different H.")
+    ap.add_argument("--feat-off", type=int, default=FEAT_OFF,
+                    help="constant subtracted from each band feature (RTL FEAT_OFF). "
+                         "The trainer centres on the training-set mean, which is 6 "
+                         "for sheila and drone but differs for other corpora; pass "
+                         "the value in the header comment or the check will fail "
+                         "for a reason that has nothing to do with the export.")
     args = ap.parse_args()
 
     d = np.load(os.path.join(ART, f"ww_feats_{args.tag}.npz"), allow_pickle=True)
     feats, labels, splits = d["feats"], d["labels"], d["splits"]
     cfg = wwhw.HWConfig(**json.loads(str(d["cfg"])))
+    if args.stats:
+        have = [str(s) for s in d["stats"]]
+        sel = [s.strip() for s in args.stats.split(",") if s.strip()]
+        missing = [s for s in sel if s.partition("@")[0] not in have]
+        if missing:
+            raise SystemExit(f"--stats {missing} not in {args.tag} extraction {have}")
+        nb = cfg.nband // len(have)
+        # Same order train/optim/qat.py trains in and the RTL reads: every
+        # band's maximum first, then the means of the bands that have one
+        # ("smean6@3-5" = the RTL's AVG_N). Any other order decodes every
+        # weight into the wrong feature without failing.
+        cols = []
+        for s in sel:
+            name, _, where = s.partition("@")
+            for b in range(nb):
+                if where and where != "all":
+                    lo, _, hi = where.partition("-")
+                    if not (int(lo) <= b <= int(hi or lo)):
+                        continue
+                cols.append(b * len(have) + have.index(name))
+        feats = feats[:, :, cols]
+        cfg.nband = len(cols)
+    if args.nframe:
+        cfg.nframe = args.nframe
+    if args.nphase:
+        cfg.nphase = args.nphase
     W1, HB, W2, thr, hacc_w = parse_header(args.header, cfg.nframe, cfg.nband)
     nz = int((W1 != 0).sum())
     print(f"header {os.path.relpath(args.header)}: H={W1.shape[0]} {hacc_w}-bit accumulator, "
@@ -134,20 +181,23 @@ def main():
 
     if args.set_fpr:
         thr = set_threshold(args.header, feats, labels, splits, W1, HB, W2,
-                            cfg.nframe // cfg.nphase, args.set_fpr, hacc_w)
+                            cfg.nframe // cfg.nphase, args.set_fpr, hacc_w,
+                            feat_off=args.feat_off)
         print(f"threshold set to {thr} at {args.set_fpr*100:.0f}% validation clip FPR")
 
     m = splits == {"train": 0, "val": 1, "test": 2}[args.split]
-    sc = window_scores(feats[m], W1, HB, W2, cfg.nframe // cfg.nphase, hacc_w).max(1)
+    sc = window_scores(feats[m], W1, HB, W2, cfg.nframe // cfg.nphase, hacc_w,
+                       feat_off=args.feat_off).max(1)
     pos = labels[m] > 0
-    print(f"{args.split}: {m.sum()} clips, {pos.sum()} drone   AUC {auc(sc, pos)*100:.2f}%")
+    print(f"{args.split}: {m.sum()} clips, {pos.sum()} positive   AUC {auc(sc, pos)*100:.2f}%")
     print(f"  score range {sc.min()}..{sc.max()}   fires (> {thr}) on "
-          f"{(sc[pos] > thr).mean()*100:.1f}% of drone, {(sc[~pos] > thr).mean()*100:.1f}% of non-drone")
+          f"{(sc[pos] > thr).mean()*100:.1f}% of positives, "
+          f"{(sc[~pos] > thr).mean()*100:.1f}% of negatives")
     neg = np.sort(sc[~pos])
     for fpr in (0.01, 0.02, 0.05, 0.10):
         t = neg[int(np.ceil((1 - fpr) * len(neg))) - 1]
         print(f"  threshold {t:3d}: recall {(sc[pos] > t).mean()*100:5.1f}%  at <= {fpr*100:.0f}% "
-              f"non-drone clips firing (actual {(sc[~pos] > t).mean()*100:.1f}%)")
+              f"negative clips firing (actual {(sc[~pos] > t).mean()*100:.1f}%)")
     if "index" in d.files:
         sil = m & (d["index"] < 0)
         if sil.any():
