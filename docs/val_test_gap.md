@@ -340,6 +340,45 @@ now reports `val_final`, `best_epoch_mean`, `val_nosil_mean` and
 `test_nosil_mean`. The first two are what exposed the schedule confound above;
 the last two are what showed mosquito to be below chance.
 
+## The sweep's verdict: adopt nothing
+
+13 configs x 6 seeds on four tasks spanning the whole range, at `pdm_gain=2.0`,
+read through `train/optim/compare.py` against the correct baseline. Best result
+per task:
+
+| task | best Δtest | config |
+|---|---|---|
+| mosquito | +1.94 | wd=0.0001 |
+| clap | +0.93 | aug_time=3 |
+| vad | +0.45 | epochs=4000 |
+| dogbark | +0.35 | leak=0.2 |
+
+Small, and each task's winner is a different knob. But the decisive figure is
+what the **selection discipline** would actually have bought, taking each
+task's best-by-validation row:
+
+| task | val-selected | Δval | Δtest |
+|---|---|---|---|
+| clap | wd=0.001 | +0.79 | +0.30 |
+| dogbark | aug_time=1 | +0.71 | −0.07 |
+| vad | lr_w1=0.16 | +1.00 | −0.10 |
+| mosquito | epochs=4000 | +1.98 | **−2.33** |
+| **mean** | | **+1.12** | **−0.55** |
+
+Adopting the winners would gain 1.12 validation and **lose 0.55 test**. The
+sweep is not merely null; selecting from it honestly is harmful, so the right
+action is to adopt none of it. On mosquito the effect is stark enough to read
+off one table: every config that gains test loses validation, and the
+best-validation config has the worst test.
+
+`aug_time`, which looked like the one survivor, does not survive either: +0.93
+on clap, −0.11 on mosquito, −0.07 on dogbark, +0.06 on vad. One task in four.
+
+That also closes the epoch question from the last direction. `epochs=250` helps
+mosquito (+1.21) and vad (+0.16), hurts clap (−1.72) and dogbark (−0.34), mean
+−0.17. The benefit tracks how badly a task overfits -- but no fixed budget
+wins, and validation cannot say which regime a task is in.
+
 ## What cannot be fixed, and what can
 
 The gap is mostly an honest measurement of deployment generalisation. Shrinking
