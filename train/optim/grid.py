@@ -105,8 +105,12 @@ def report(path: str, top: int, sort: str) -> None:
     # the smaller validation split. They are the honest pair; `gap` between them
     # is the honest gap. docs/val_test_gap.md.
     honest = any(r.get("val_nosil_mean") is not None for r in rows[:top])
+    # nz is the surviving fraction of the template: the area a row asks for.
+    dense = any(r.get("nz_mean") is not None for r in rows[:top])
     head = (f"{'config':{w}}  {'n':>2}  {'val mean':>8}  {'val sd':>6}  "
             f"{'test mean':>9}  {'gap':>6}")
+    if dense:
+        head += f"  {'nz':>5}"
     if honest:
         head += f"  {'val real':>8}  {'test real':>9}  {'gap real':>8}"
     print(head)
@@ -114,6 +118,9 @@ def report(path: str, top: int, sort: str) -> None:
         line = (f"{r['label']:{w}}  {r['n']:>2}  {r['val_mean']*100:7.2f}%  "
                 f"{r['val_std']*100:5.2f}%  {r['test_mean']*100:8.2f}%  "
                 f"{(r['val_mean']-r['test_mean'])*100:+6.2f}")
+        if dense:
+            nzm = r.get("nz_mean")
+            line += f"  {nzm*100:4.1f}%" if nzm is not None else f"  {'--':>5}"
         if honest:
             vn, tn = r.get("val_nosil_mean"), r.get("test_nosil_mean")
             line += (f"  {vn*100:7.2f}%  {tn*100:8.2f}%  {(vn-tn)*100:+8.2f}"
@@ -191,7 +198,8 @@ def main() -> None:
             f.write(json.dumps(r) + "\n")
         print(f"[{i:3d}/{len(todo)}] {r['label'][:78]:78}  "
               f"val {r['val_mean']*100:6.2f}+-{r['val_std']*100:4.2f}  "
-              f"test {r['test_mean']*100:6.2f}  ({r['secs']:.0f}s)", flush=True)
+              f"test {r['test_mean']*100:6.2f}  nz {r.get('nz_mean', 0)*100:5.1f}%"
+              f"  ({r['secs']:.0f}s)", flush=True)
     print(f"[grid] done in {(time.time()-t0)/60:.1f} min", flush=True)
     report(path, args.top, args.sort)
 

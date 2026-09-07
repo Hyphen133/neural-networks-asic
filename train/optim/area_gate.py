@@ -57,14 +57,16 @@ IMAGE = os.environ.get("LIBRELANE_IMAGE", "ghcr.io/librelane/librelane:3.0.6")
 DEFAULTS = dict(NSTAGE=9, K_SHIFT=2, STATE_W=10, TAP0=4, NBAND=5, MANT=1,
                 FEAT_W=4, FRAME_LOG2=16, NFRAME=16, NPHASE=2, NHID=4, HACC_W=6,
                 HSHIFT=1, FEAT_OFF=6, SCORE_W=10, DEBUG_PINS=1,
-                AVG_N=0, AVG_SHIFT=6)
+                AVG_N=0, AVG_SHIFT=6, HOLD_FRAMES=16)
 
 
-def synth_header(p: dict, seed: int = 0) -> str:
-    """A header of the right widths, at the shipped weight density.
+def synth_header(p: dict, seed: int = 0, density: float = DENSITY) -> str:
+    """A header of the right widths, at a given weight density.
 
     An all-zero template would let yosys delete the whole adder tree, so the
-    density matters: zeros really do drop out of the tree in this design.
+    density matters: zeros really do drop out of the tree in this design. That
+    makes ``--density`` a measurement rather than a detail -- sweeping it
+    prices template sparsity in um^2 before a pruning run is ever trained.
     """
     rng = random.Random(seed)
     H, NF, hacc = p["NHID"], p["NFRAME"], p["HACC_W"]
@@ -78,7 +80,7 @@ def synth_header(p: dict, seed: int = 0) -> str:
     for _ in range(H * NF):
         r = 0
         for b in range(NB):
-            w = rng.choice([1, -1]) if rng.random() < DENSITY else 0
+            w = rng.choice([1, -1]) if rng.random() < density else 0
             r |= code[w] << (2 * b)
         rows.append(r)
     w1w, w1v = len(rows) * 2 * NB, 0
@@ -103,11 +105,19 @@ def synth_header(p: dict, seed: int = 0) -> str:
             f"{13 & ((1 << sw) - 1):0{max(sw//4,1)}x};\n")
 
 
-def yosys(p: dict, header: str | None, defines: str) -> tuple[int, int, float]:
-    """Synthesise one configuration; returns (cells, flops, area_um2)."""
+def yosys(p: dict, header: str | None, defines: str,
+          density: float = DENSITY, seed: int = 0) -> tuple[int, int, float]:
+    """Synthesise one configuration; returns (cells, flops, area_um2).
+
+    ``seed`` re-draws the synthetic template. Two draws at the same density
+    synthesise to different areas -- a different template is different logic --
+    so re-running a row at a few seeds is what separates a real effect from the
+    noise floor of this measurement.
+    """
     with tempfile.TemporaryDirectory(dir=ART) as td:
-        for name, seed in (("ww_weights.svh", 0), ("ww_weights_drone.svh", 1)):
-            text = open(header).read() if header else synth_header(p, seed)
+        for name, s in (("ww_weights.svh", 0), ("ww_weights_drone.svh", 1)):
+            text = (open(header).read() if header
+                    else synth_header(p, 2 * seed + s, density))
             with open(os.path.join(td, name), "w") as f:
                 f.write(text)
         # The RTL includes "ww_weights.svh" by bare name and yosys resolves that
@@ -167,6 +177,12 @@ def main() -> None:
     ap.add_argument("--set", action="append", default=[], metavar="PARAM=VALUE",
                     help="RTL parameter override, e.g. --set NFRAME=24")
     ap.add_argument("--header", default="", help="real header instead of a synthetic one")
+    ap.add_argument("--density", type=float, default=DENSITY,
+                    help="non-zero fraction of the synthetic template; sweeping "
+                         "it prices pruning in um^2 (ignored with --header)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="re-draw the synthetic template; the spread over seeds "
+                         "is this measurement's noise floor")
     ap.add_argument("--defines", default="", help="e.g. -DWW_WEIGHTS_DRONE")
     ap.add_argument("--out", default=os.path.join(ART, "optim", "area.jsonl"))
     args = ap.parse_args()
@@ -180,10 +196,14 @@ def main() -> None:
             raise SystemExit(f"unknown RTL parameter {k!r}; known: {sorted(DEFAULTS)}")
         p[k] = int(v)
 
-    cells, flops, area = yosys(p, args.header or None, args.defines)
+    cells, flops, area = yosys(p, args.header or None, args.defines,
+                               args.density, args.seed)
     v = verdict(area, flops)
     changed = {k: val for k, val in p.items() if val != DEFAULTS[k]} or "shipped"
-    row = dict(label=args.label, params=p, changed=changed, cells=cells, flops=flops,
+    row = dict(label=args.label, params=p, changed=changed,
+               density=None if args.header else args.density,
+               seed=None if args.header else args.seed,
+               cells=cells, flops=flops,
                area_um2=round(area), tile_util=round(area / TILE_UM2, 4),
                est_flow_um2=round(area * FLOW_MULT),
                est_core_util=round(area * FLOW_MULT / CORE_UM2, 4),

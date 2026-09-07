@@ -8,7 +8,10 @@ included, so everything established for sheila about area, timing and
 verification carries over. This document records what was done, what was
 measured, and how to build it.
 
-Companion to [DESIGN.md](DESIGN.md), which describes the hardware in full.
+Companion to [DESIGN.md](DESIGN.md), which describes the hardware in full, and
+to [pruning.md](pruning.md), which asks what this detector gives up if it is
+made *smaller* — and finds 2 134 µm² and 24 flip-flops that cost nothing
+(`NPHASE=1` with a time-tied template).
 
 ## 1. Result
 

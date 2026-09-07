@@ -32,16 +32,21 @@ PY=.venv/bin/python
 
 TAG=$1; NAME=$2; NF=$3; NPH=$4; ACCW=$5; shift 5
 SEEDS=${SEEDS:-8}
+# Anything else the trainer needs, as Cfg fields: EXTRA_SET="H=2 wt=0.9". The
+# five positional arguments do not cover H, which the pruning study moves.
+EXTRA_SET=${EXTRA_SET:-}
 HDR="artifacts/headers/ww_weights_${NAME}.svh"
 SETS=""
 for kv in "$@"; do SETS="$SETS --set $kv"; done
+CFG_SETS=""
+for kv in $EXTRA_SET; do CFG_SETS="$CFG_SETS --set $kv"; done
 
 mkdir -p artifacts/headers
-echo "=== $NAME: train from $TAG (nframe=$NF nphase=$NPH accw=$ACCW, $SEEDS seeds)"
+echo "=== $NAME: train from $TAG (nframe=$NF nphase=$NPH accw=$ACCW$EXTRA_SET, $SEEDS seeds)"
 $PY train/optim/finalise.py --tag "$TAG" --name "$NAME" --seeds "$SEEDS" \
     --out "$HDR" --set-fpr 0.05 \
     --set "nframe=$NF" --set "nphase=$NPH" --set "accw=$ACCW" \
-    --set epochs=1000 || exit 1
+    --set epochs=1000 $CFG_SETS || exit 1
 
 echo "=== $NAME: fit gate on the real header"
 $PY train/optim/area_gate.py --label "final_$NAME" --header "$HDR" $SETS

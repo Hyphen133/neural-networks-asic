@@ -67,6 +67,20 @@ class Cfg:
     accw: int = 6                    # HACC_W        costly
     feat_off: int = -1               # -1 = train-set mean, as shipped
 
+    # --- pruning ---
+    # `wt` and `l1` prune individual weights. Measured (docs/pruning.md 2):
+    # they cost nothing and buy nothing -- between 81 % and 50 % non-zero the
+    # synthesised area moves +19 um^2 against a +-55 um^2 noise floor, because
+    # the area is in the weight *table's* selection logic and not in the adder
+    # tree. `tie` prunes that table instead: one row shared by every block of
+    # `tie` frames, so NFRAME/tie distinct rows describe the window. The drone's
+    # two dominant units are already nearly constant along the time axis
+    # (docs/DRONE.md 4), and no RTL parameter changes -- the emitted header just
+    # repeats each row, which is a header the shipped silicon reads as-is.
+    wt: float = 0.5                  # |w| <= wt quantises to 0; 0.5 = plain round
+    l1: float = 0.0                  # L1 pull on the template's latent weights
+    tie: int = 0                     # share one row per `tie` frames; 0/1 = off
+
     # --- optimisation (free) ---
     epochs: int = 250
     warmup: float = 0.4              # fraction of epochs on mean pooling
@@ -134,6 +148,52 @@ class Cfg:
 # ---------------------------------------------------------------------------
 # Requantiser with a configurable leak (train_sheila's RQ has it as a constant)
 # ---------------------------------------------------------------------------
+class QWDead(torch.autograd.Function):
+    """Ternary quantiser with a widened dead zone: |w| <= t -> 0.
+
+    ``QW`` rounds at 0.5, which is the threshold that changes a latent weight's
+    meaning least. Raising it *prunes*: the weight has to be worth more than t
+    to keep its adder in the tree. The backward pass is QW's, so a pruned
+    weight still receives gradient and can come back.
+    """
+
+    @staticmethod
+    def forward(ctx, x, t):
+        ctx.save_for_backward(x)
+        return torch.sign(x) * (x.abs() > t).to(x.dtype)
+
+    @staticmethod
+    def backward(ctx, g):
+        (x,) = ctx.saved_tensors
+        return g * (x.abs() <= 1.5), None
+
+
+def quant1(w, c: "Cfg"):
+    """Quantise the template exactly as the emitted header will."""
+    if c.WL == 1 and c.wt != 0.5:
+        return QWDead.apply(w, c.wt)
+    return QW.apply(w, c.WL)
+
+
+def _nrow(c: "Cfg") -> int:
+    """Distinct template rows per hidden unit: NFRAME unless `tie` shares them."""
+    return c.nframe if c.tie < 2 else -(-c.nframe // c.tie)
+
+
+def _spread(w, c: "Cfg"):
+    """(H, NFRAME/tie, NB) -> (H, NFRAME, NB) by repeating each tied row."""
+    if c.tie < 2:
+        return w
+    return w.repeat_interleave(c.tie, 1)[:, :c.nframe]
+
+
+def quant1_np(w: np.ndarray, c: "Cfg") -> np.ndarray:
+    """:func:`quant1` on numpy, for the export and the sparsity count."""
+    if c.WL == 1 and c.wt != 0.5:
+        return (np.sign(w) * (np.abs(w) > c.wt)).astype(np.int64)
+    return np.clip(np.round(w), -c.WL, c.WL).astype(np.int64)
+
+
 class RQLeak(torch.autograd.Function):
     """clamp(acc >> shift, 0, hi) forward; leaky straight-through backward."""
 
@@ -245,9 +305,13 @@ def _build(c: Cfg, data: Data, x0: torch.Tensor):
     NB = data.cfg.nband
     bias_lim = ((1 << (c.accw - 1)) - 1) if c.accw else 0
 
-    w1 = nn.Parameter(torch.empty(c.H, c.nframe, NB, device=dev).uniform_(-1.2, 1.2))
+    # With `tie` the parameter holds one row per block of frames and the
+    # forward pass repeats it, so the template the hardware reads is still
+    # NFRAME rows -- identical rows. Nothing about the RTL changes.
+    nrow = _nrow(c)
+    w1 = nn.Parameter(torch.empty(c.H, nrow, NB, device=dev).uniform_(-1.2, 1.2))
     with torch.no_grad():
-        a0 = torch.einsum('nwfb,hfb->nwh', x0, QW.apply(w1, c.WL))
+        a0 = torch.einsum('nwfb,hfb->nwh', x0, _spread(quant1(w1, c), c))
         b1v = -a0.reshape(-1, c.H).median(0).values
         if bias_lim:
             b1v = b1v.clamp(-bias_lim - 1, bias_lim)
@@ -257,7 +321,7 @@ def _build(c: Cfg, data: Data, x0: torch.Tensor):
     b = nn.Parameter(torch.zeros(1, device=dev))
 
     def fwd(x):
-        q1 = QW.apply(w1, c.WL)
+        q1 = _spread(quant1(w1, c), c)
         if c.accw:
             # Frame by frame, saturating each step -- exactly the RTL's loop.
             lim = (1 << (c.accw - 1)) - 1
@@ -387,6 +451,10 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
             pooled = _pool(fwd(xw), c, mean_phase)
             loss = F.binary_cross_entropy_with_logits(pooled / torch.exp(lt), yb,
                                                       pos_weight=pw)
+            if c.l1:
+                # On the *latent* template: the quantiser's gradient is a mask,
+                # so this is the only place a "prefer zero" pressure can enter.
+                loss = loss + c.l1 * tensors[0].abs().mean()
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -456,12 +524,19 @@ def run(c: Cfg, device: str = "cuda", verbose: bool = False) -> dict:
                                 data.cfg.frame_ms)
     vops, _ = operating_points(sv[data.va], data.is_pos[data.va], hop,
                                data.cfg.frame_ms, (1.0,))
+    # Fraction of the template that survives quantisation. This is the area
+    # number, not a statistic: every zero is an adder yosys never builds.
+    # The template as the header will hold it: tied rows already repeated, so
+    # both the sparsity figure and the export describe the same NFRAME rows.
+    out = [t.detach().cpu().numpy() for t in tensors]
+    out[0] = _spread(tensors[0].detach(), c).cpu().numpy()
+    nz = float((quant1_np(out[0], c) != 0).mean())
     return dict(cfg=asdict(c), key=c.key(), label=c.label(), seed=c.seed,
-                val_auc=va_auc, test_auc=te_auc, best_epoch=best[2],
+                val_auc=va_auc, test_auc=te_auc, best_epoch=best[2], nz=nz,
                 val_final=val_final, val_nosil=val_nosil, test_nosil=test_nosil,
                 centre=int(centre), nwin=len(eval_starts), eph=eph,
                 recall_1fa=ops[1]["recall"], thr=int(np.floor(vops[0]["thr"])),
-                hist=hist, tensors=[t.detach().cpu().numpy() for t in tensors])
+                rows=_nrow(c), hist=hist, tensors=out)
 
 
 def run_seeds(c: Cfg, seeds, device: str = "cuda") -> dict:
@@ -490,6 +565,9 @@ def run_seeds(c: Cfg, seeds, device: str = "cuda") -> dict:
                 # these two is the honest one. docs/val_test_gap.md 3.
                 val_nosil_mean=float(np.mean([r["val_nosil"] for r in rs])),
                 test_nosil_mean=float(np.mean([r["test_nosil"] for r in rs])),
+                # Mean surviving fraction of the template over the seeds: how
+                # much adder tree this configuration actually asks for.
+                nz_mean=float(np.mean([r["nz"] for r in rs])),
                 cfg=asdict(c), per_seed=[dict(seed=r["seed"], val=r["val_auc"],
                                               test=r["test_auc"],
                                               final=r["val_final"]) for r in rs])
@@ -502,7 +580,9 @@ def emit(res: dict, path: str, name: str) -> str:
     """Write a ww_weights*.svh from a :func:`run` result."""
     c = Cfg(**res["cfg"])
     t = res["tensors"]
-    W1 = np.clip(np.round(t[0]), -c.WL, c.WL).astype(np.int64)
+    # The same quantiser the forward pass used, dead zone included, or the
+    # header would hold a denser template than the AUC was measured on.
+    W1 = quant1_np(t[0], c)
     W2 = np.clip(np.round(t[2]), -c.WL, c.WL).astype(np.int64).reshape(-1)
     HB = np.round(t[1]).astype(np.int64)
     bo = float(np.asarray(t[3]).reshape(-1)[0])

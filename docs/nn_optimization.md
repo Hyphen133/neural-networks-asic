@@ -433,6 +433,20 @@ precision; and a 1×2 tile makes the whole question disappear.
 
 ---
 
+## 6b. The other direction: making the drone smaller
+
+Everything in this file asks what it costs to make a detector *better*, and
+every configuration it measures grows. `docs/pruning.md` asks the reverse
+question of drone_2 and answers it: `NPHASE=1` (a drone is stationary, so a
+second staggered window buys nothing) together with a template tied across
+pairs of frames takes **2 134 µm², 24 flip-flops and 9.6 points of core
+utilisation** out of the part at no measured accuracy cost — val 99.05 / 99.09
+against the unpruned 98.94. It also settles two things this file left implicit:
+weight-level sparsity is worth **nothing** in area (81 % → 50 % non-zero is
++19 µm² against a ±55 µm² noise floor, because the cost is the weight table's
+row-selection logic and not the adder tree), and `NFRAME` is the worst
+parameter on the frontier to cut rather than merely a neutral one.
+
 ## 6a. What the AUC does not say
 
 `docs/robustness.md` takes the §4.6 header apart along the axes AUC hides. The
