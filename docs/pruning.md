@@ -188,6 +188,9 @@ and a free prune has none.
 | `NFRAME` 16→2 | 93.13 ± 0.35 | 92.05 | −6.59 | −1 961 | −6 | 298 |
 | `tie=16` (1 row/unit) | 95.86 ± 1.16 | 95.41 | −3.23 | −670 | 0 | 207 |
 | `NHID` 4→1 (linear template) | 94.47 ± 0.88 | 93.98 | −4.66 | −3 440 | −39 | 738 |
+| `NHID=2` + `NPHASE=1` | 97.49 ± 0.45 | 97.33 | −1.31 | −3 379 | −38 | **2 580** |
+| `NPHASE=1` + `NFRAME=8` | 98.00 ± 0.33 | 97.24 | −1.40 | −2 499 | −26 | 1 785 |
+| `NHID=2` + `NFRAME=8` | 95.32 ± 0.80 | 94.73 | −3.91 | −2 787 | −28 | 713 |
 | `NHID=2 NPHASE=1 NFRAME=8` | 96.06 ± 0.42 | 95.32 | −3.32 | −3 553 | −40 | 1 070 |
 
 Four things this says that were not obvious beforehand:
@@ -200,9 +203,12 @@ Four things this says that were not obvious beforehand:
 2. **Weight pruning is a no-op in both directions** — `wt` and `l1` move
    accuracy by less than a seed spread and area by less than the synthesis
    noise floor, anywhere from 75 % to 88 % non-zero.
-3. **The prunes are additive, not synergistic.** `NHID=2 NPHASE=1 NFRAME=8`
-   costs 3.32 points against the 2.90 its parts predict, so nothing reaches
-   §4's 15 989 µm² floor cheaply.
+3. **The prunes are roughly additive, and additivity is a rule of thumb rather
+   than a law.** `NHID=2 NPHASE=1 NFRAME=8` costs 3.32 points against the 2.90
+   its parts predict, and `NHID=2 NPHASE=1` costs 1.31 against 0.91 — but
+   `NPHASE=1 NFRAME=8` costs 1.40 against a predicted 1.72, i.e. *less* than
+   its parts. Nothing reaches §4's 15 989 µm² floor cheaply, and any pair worth
+   shipping has to be measured rather than summed.
 4. **Integration time is the detector, and the worst thing to cut.** Every
    `NFRAME` row sits at the bottom of the value ranking (298–367 µm²/pt),
    which is the area frontier agreeing with the mechanism: unit 2's bias of −7
@@ -248,19 +254,27 @@ What each half does:
   equal pairs, and the shipped silicon reads it unmodified. The saving is
   yosys folding the duplicated rows out of the row-selection logic (§2–3).
 
-If the tile ever needs more than this, spend it in the order the `µm²/pt`
-column gives: `NHID` 4→2 first (2 488 µm² for 1.18 points), then `NBAND` 5→4
-(865 for 0.84), then `STATE_W` 10→9 (536 for 0.93). Do **not** spend it on
-`NFRAME`, `HACC_W`, `MANT`, `tie=16` or `NHID=1`.
+If the tile ever needs more than this, the best value on the whole frontier is
+**`NHID=2` together with `NPHASE=1`**: 3 379 µm² and 38 flip-flops for 1.31
+points (2 580 µm²/pt, better than `NHID=2` alone at 2 110), landing at 81.9 %
+estimated core. After that, `NBAND` 5→4 (865 µm² for 0.84) and `STATE_W` 10→9
+(536 for 0.93). Do **not** spend it on `NFRAME`, `HACC_W`, `MANT`, `tie=16` or
+`NHID=1`.
 
 Not worth doing at all:
 
 * **weight-level pruning** (`wt`, `l1`) — free, but buys nothing (§2);
 * **`HOLD_FRAMES`** — 16→1 is −82 µm², inside the noise, and **zero** flops,
-  because `hold` is declared `[FIDX_W:0]` (`:209`) and sized by `NFRAME` rather
-  than by the parameter. Change it only for blink-per-detection semantics
-  instead of a solid LED; resizing that register is a separate two-line RTL
-  change worth ~4 flops;
+  because `hold` was declared `[FIDX_W:0]` and sized by `NFRAME` rather than by
+  the parameter. **This entry found the right fact and drew the wrong
+  conclusion.** A register too narrow to hold `HOLD_FRAMES` does not merely make
+  the parameter free to change — on the wake word (`NFRAME=8`, so 4 bits) it
+  made `4'(16)` truncate to zero, and the LED never lit at all. `hold` is now
+  sized `$clog2(HOLD_FRAMES+1)`; see [hold_width.md](hold_width.md). The area
+  numbers above stand, and the drone's 16→2 now ships for output latency rather
+  than for area: −209 µm² and −28 instances, in `hardened/drone_4`.
+  `HOLD_FRAMES=1` remains unusable — the load and the decrement fall in the same
+  frame, so it blinks for a few hundred clocks and is never seen;
 * **`SCORE_W` 9 or 8 and `DEBUG_PINS=0`** — measured at or above the shipped
   area (§4, and [nn_optimization.md](nn_optimization.md) for `DEBUG_PINS`).
 
