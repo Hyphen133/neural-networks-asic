@@ -23,6 +23,12 @@
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
   "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
 
+  "//": "CTS_SINK_BUFFER_MAX_CAP_DERATE_PCT - halves the cap budget CTS gives a",
+  "//": "leaf buffer, so it clusters ~5 flops per leaf instead of ~14 and picks",
+  "//": "sg13g2_buf_2 over sg13g2_buf_8. Clears all 14 max-fanout violations",
+  "//": "against the liberty's default_max_fanout: 8 for +98 um2. See docs/fanout.md.",
+  "CTS_SINK_BUFFER_MAX_CAP_DERATE_PCT": 50,
+
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
   "LINTER_INCLUDE_PDK_MODELS": 1,

@@ -13,7 +13,11 @@ microphone drive and re-hardened.
 | test AUC | **94.88 %** | **98.92 %** |
 | originally shipped | 89.14 % | 95.27 % |
 | improvement | **+5.74** | **+3.65** |
-| hardening | **clean** (`hardened/sheila_2`) | **clean** (`hardened/drone_2`) |
+| hardening | **clean** (`hardened/sheila_2`) | **clean** (`hardened/drone_3`) |
+
+`drone_3` is `drone_2` with a re-tuned clock tree and a byte-identical logic
+netlist -- same 98.92 % AUC, but 0 max-fanout violations instead of 14. See
+`docs/fanout.md`.
 
 Sheila took one extra step. At `NBAND=6` it scores 95.28 % but will not place
 (DPL-0036), so it ships at `NBAND=5` and 94.88 %. That costs **0.40 AUC** and
@@ -109,7 +113,11 @@ nets are the FSM state decodes, one driving **104** loads and another 54. That
 is inherent to sharing one time-multiplexed datapath across 205 flops, so it is
 not a coding slip that can be tidied away. Raising `MAX_FANOUT_CONSTRAINT` to
 16 was tried and changed nothing -- identical 81.662 % utilisation, same
-DPL-0036.
+DPL-0036. The reason it changed nothing is now known: the liberty's
+`default_max_fanout : 8` is a floor, because OpenSTA takes
+`min(SDC, liberty)`, so the SDC knob can only ever tighten the limit. These are
+data nets and distinct from the CTS clock-leaf violations closed in
+`docs/fanout.md`.
 
 Two other hypotheses were tested and **both were wrong**, recorded here so they
 are not tried again. The frame-mean feature was blamed for 127 µm² of dead

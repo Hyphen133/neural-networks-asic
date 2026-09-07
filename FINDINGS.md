@@ -387,7 +387,12 @@ Three effects, in order of size:
    fast corner and the TT clock network.
 3. **Fanout repair.** `MAX_FANOUT_CONSTRAINT=10` adds ~125 buffers (~1 000 µm²)
    on the reset, the FSM state and the tick. Raising the constraint in
-   `config.json` had no effect (the SDC wins).
+   `config.json` had no effect, and the reason is the liberty, not the SDC:
+   `sg13g2` sets `default_max_fanout : 8` and OpenSTA takes
+   `min(SDC, liberty)`, so 8 is a floor that `MAX_FANOUT_CONSTRAINT` cannot
+   lift. Note these are *data* nets, which `repair_design` does buffer. The
+   separate 14 violations on the CTS clock leaves are not reachable from here
+   at all -- see `docs/fanout.md`, which closes them in CTS for +98 µm².
 
 Model-neutral RTL changes, all bit-exact against `wwhw.py`:
 
@@ -431,6 +436,9 @@ Flow result for the shipped RTL (`runs/wokwi6`, `harden_local.sh`):
 | timing | setup slack 6.9 ns at slow/125 °C, hold slack +0.15 ns at fast/−40 °C |
 | LVS, magic DRC, lint, max slew/cap | all 0 |
 | remaining warnings | 14 max-fanout (informational), generic SDC |
+
+The 14 max-fanout warnings were later closed outright, in CTS rather than in
+the RTL: `docs/fanout.md`.
 
 96 % is high; it routed clean, but there is no room left. Any future change
 that adds flops needs the one-window fallback.
